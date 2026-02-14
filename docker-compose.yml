@@ -1,0 +1,50 @@
+services:
+  api:
+    image: python:3.11-slim
+    container_name: jobs_api
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      sh -c "pip install fastapi uvicorn requests beautifulsoup4 &&
+      uvicorn app:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+
+  discover:
+    image: python:3.11-slim
+    container_name: jobs_discover
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      sh -c "pip install requests -q && python discover.py"
+    profiles:
+      - discover
+
+  scrape:
+    image: python:3.11-slim
+    container_name: jobs_scrape
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      sh -c "pip install playwright beautifulsoup4 -q &&
+      playwright install chromium --with-deps &&
+      python agent_scrape.py"
+    profiles:
+      - scrape
+
+  discover-ai:
+    image: python:3.11-slim
+    container_name: jobs_discover_ai
+    volumes:
+      - .:/app
+    working_dir: /app
+    env_file:
+      - .env
+    command: >
+      sh -c "pip install requests python-dotenv -q &&
+      python agent_discover.py --region Eindhoven --source osm --daily-target 50"
+    profiles:
+      - discover-ai

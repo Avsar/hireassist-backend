@@ -1,0 +1,33 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Database
+*.db
+
+# Logs
+data/logs/
+*.log
+
+# Temp files
+tmp_jobs.json
+cUsersamitaSourceJobsNLprojecttmp_jobs.json
+nul
+
+# Playwright browsers (installed via `playwright install`)
+ms-playwright/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
