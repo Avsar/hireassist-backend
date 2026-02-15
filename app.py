@@ -46,9 +46,10 @@ class _FrameHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
         # Remove any X-Frame-Options that downstream code might set
-        response.headers.pop("X-Frame-Options", None)
+        if "X-Frame-Options" in response.headers:
+            del response.headers["X-Frame-Options"]
         response.headers["Content-Security-Policy"] = (
-            "frame-ancestors https://cubea.nl http://localhost:* https://localhost:*"
+            "frame-ancestors https://cubea.nl https://www.cubea.nl http://localhost:* https://localhost:*"
         )
         return response
 
