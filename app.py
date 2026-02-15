@@ -622,7 +622,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "is_new_today": False,
             })
         if not jobs:
-            # No scraped data yet — show browse card until agent_scrape.py is run
+            # No scraped data yet — placeholder card until agent_scrape.py is run
             jobs.append({
                 "company": company_name,
                 "source": source,
@@ -638,6 +638,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "apply_url": token,
                 "updated_at": "",
                 "is_new_today": False,
+                "_placeholder": True,
             })
 
     return jobs
@@ -887,7 +888,7 @@ def jobs(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=100, ge=1, le=500),
 ):
-    all_jobs = aggregate_jobs(company, q, country, city, english_only, new_today_only)
+    all_jobs = [j for j in aggregate_jobs(company, q, country, city, english_only, new_today_only) if not j.get("_placeholder")]
     total = len(all_jobs)
     start = (page - 1) * per_page
     page_jobs = all_jobs[start:start + per_page]
@@ -895,7 +896,7 @@ def jobs(
 
 
 @app.get("/health")
-def health():
+def health(full: bool = Query(default=False)):
     report = []
     total = 0
     now = datetime.now(timezone.utc)
@@ -910,12 +911,16 @@ def health():
                 jobs = normalize_jobs(c["name"], c["source"], c["token"])
                 JOB_CACHE[key] = {"jobs": jobs, "time": now}
                 cache_age_sec = 0
-            count = len(jobs)
+            count = sum(1 for j in jobs if not j.get("_placeholder"))
             total += count
             report.append({"company": c["name"], "source": c["source"], "jobs": count, "status": "ok", "cache_age_sec": cache_age_sec})
         except Exception as e:
             report.append({"company": c["name"], "source": c["source"], "jobs": 0, "status": "error", "error": str(e), "cache_age_sec": cache_age_sec})
-    return {"total_jobs": total, "cache_ttl_sec": int(JOB_CACHE_TTL.total_seconds()), "companies": report}
+    result = {"total_jobs": total, "cache_ttl_sec": int(JOB_CACHE_TTL.total_seconds()), "companies": report}
+    if full:
+        with sqlite3.connect(DB_FILE) as conn:
+            result["scraped_jobs_total"] = conn.execute("SELECT COUNT(*) FROM scraped_jobs").fetchone()[0]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1040,6 +1045,7 @@ def ui(
     country_jobs = [j for j in all_jobs if soft_country_match(j, country)] if country else all_jobs
     cities = unique([j.get("city") for j in country_jobs if j.get("city")])
     all_visible = [j for j in country_jobs if not city or (j.get("city") or "").lower() == city.lower()]
+    total_real = sum(1 for j in all_visible if not j.get("_placeholder"))
     total_visible = len(all_visible)
     total_pages = (total_visible + PER_PAGE - 1) // PER_PAGE if total_visible else 1
     page = min(page, total_pages)
@@ -1066,16 +1072,16 @@ def ui(
     def render_card(j):
         apply_url = escape(j.get("apply_url") or "")
 
-        # Fallback browse card: careers_page entry with no title (scraping failed)
-        if j.get("source") == "careers_page" and not j.get("title"):
+        # Placeholder card: careers_page company with 0 scraped jobs
+        if j.get("_placeholder"):
             return (
                 f'<div class="job-card card-browse">'
                 f'<div class="card-header">'
                 f'<span class="card-company-name">{escape(j["company"])}</span>'
                 f'</div>'
-                f'<div class="card-location" style="margin-top:4px">Netherlands</div>'
+                f'<div class="card-location" style="margin-top:4px;color:#999">0 jobs (not scraped yet)</div>'
                 f'<div class="card-footer">'
-                f'<a class="apply-btn" href="{apply_url}" target="_blank">Browse open positions</a>'
+                f'<a class="apply-btn" href="{apply_url}" target="_blank">Browse careers page</a>'
                 f'<span class="via-label">careers page</span>'
                 f'</div>'
                 f'</div>'
@@ -1249,7 +1255,7 @@ def ui(
       </form>
     </aside>
     <main class="main">
-      <div class="results-meta">Showing <strong>{start + 1}–{start + len(visible_jobs)}</strong> of {total_visible} jobs (page {page}/{total_pages})</div>
+      <div class="results-meta">Showing <strong>{total_real}</strong> jobs from {len(all_companies)} companies (page {page}/{total_pages})</div>
       {cards_html}
       {pagination_html}
     </main>
