@@ -32,6 +32,7 @@ Open [http://localhost:8000/ui](http://localhost:8000/ui) in your browser.
 | `PORT` | No | Server port. Render sets this automatically |
 | `GIT_SHA` | No | Git commit hash shown in `/version` |
 | `BUILD_TIME` | No | Build timestamp shown in `/version` |
+| `ADMIN_TOKEN` | No | Protects `/admin/*` endpoints. Required on Render |
 | `ANTHROPIC_API_KEY` | No | Only needed for `agent_discover.py --use-ai-cleanup` |
 
 See [.env.example](.env.example) for a template.
@@ -70,6 +71,32 @@ python agent_discover.py --region Amsterdam
 python agent_discover.py --reverse-ats
 ```
 
+## Sync Local Data to Render
+
+Export your local DB as a JSON bundle and push it to the deployed backend:
+
+```bash
+# 1. Export locally
+python export_bundle.py
+
+# 2. Push to Render (PowerShell)
+curl -X POST https://YOUR-APP.onrender.com/admin/import-bundle `
+  -H "Content-Type: application/json" `
+  -H "X-Admin-Token: YOUR_TOKEN" `
+  -d (Get-Content data/exports/bundle.json -Raw)
+
+# 2. Push to Render (bash/Linux/Mac)
+curl -X POST https://YOUR-APP.onrender.com/admin/import-bundle \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: YOUR_TOKEN" \
+  -d @data/exports/bundle.json
+
+# 3. Check status
+curl -H "X-Admin-Token: YOUR_TOKEN" https://YOUR-APP.onrender.com/admin/import-status
+```
+
+Set `ADMIN_TOKEN` in Render environment variables. The import is idempotent (safe to run repeatedly).
+
 ## Architecture
 
 ```
@@ -105,6 +132,7 @@ Set these environment variables in the Render dashboard:
 |---|---|
 | `CORS_ORIGINS` | `https://your-app.onrender.com` |
 | `DB_PATH` | `companies.db` |
+| `ADMIN_TOKEN` | random secret string (for bundle import) |
 | `GIT_SHA` | *(optional)* set automatically if using Render's `RENDER_GIT_COMMIT` |
 | `BUILD_TIME` | *(optional)* |
 
