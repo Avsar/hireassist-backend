@@ -116,17 +116,20 @@ def init_db():
         # Seed from CSV on first run if table is empty
         count = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
         if count == 0 and SEED_FILE.exists():
+            seeded = 0
             with SEED_FILE.open(newline="", encoding="utf-8") as f:
                 for row in csv.DictReader(f):
                     name = (row.get("name") or "").strip()
                     source = (row.get("source") or "").strip().lower()
                     token = (row.get("token") or "").strip()
+                    confidence = (row.get("confidence") or "manual").strip()
                     if name and source and token:
                         conn.execute(
-                            "INSERT OR IGNORE INTO companies (name, source, token) VALUES (?, ?, ?)",
-                            (name, source, token)
+                            "INSERT OR IGNORE INTO companies (name, source, token, confidence) VALUES (?, ?, ?, ?)",
+                            (name, source, token, confidence)
                         )
-            logger.info("Seeded companies.db from %s", SEED_FILE)
+                        seeded += 1
+            logger.info("Seeded %d companies from %s", seeded, SEED_FILE)
         elif count == 0:
             logger.warning("companies.db is empty and no seed CSV found — run discover.py")
 
@@ -736,12 +739,12 @@ def meta_freshness():
             cur.execute("SELECT count(*) FROM jobs")
             result["jobs_intel_count"] = cur.fetchone()[0]
         except sqlite3.OperationalError:
-            result["jobs_intel_count"] = None
+            result["jobs_intel_count"] = 0
         try:
             cur.execute("SELECT count(*) FROM company_daily_stats")
             result["stats_rows_count"] = cur.fetchone()[0]
         except sqlite3.OperationalError:
-            result["stats_rows_count"] = None
+            result["stats_rows_count"] = 0
     return result
 
 

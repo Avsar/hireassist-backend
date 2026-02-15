@@ -1,39 +1,120 @@
-name,source,token
-Adyen,greenhouse,adyen
-Backbase,greenhouse,backbase
-Catawiki,greenhouse,catawiki
-Databricks,greenhouse,databricks
-Datadog,greenhouse,datadog
-Elastic,greenhouse,elastic
-Flow Traders,greenhouse,flowtraders
-GitLab,greenhouse,gitlab
-HelloFresh,greenhouse,hellofresh
-IMC Trading,greenhouse,imc
-MessageBird,greenhouse,bird
-Okta,greenhouse,okta
-Sendcloud,greenhouse,sendcloud
-Stripe,greenhouse,stripe
-Twilio,greenhouse,twilio
-Mendix,lever,mendix
-Netflix,lever,netflix
-Prosus,lever,prosus
-Bunq,recruitee,bunq
-ChannelEngine,recruitee,channelengine
-Cyclomedia,recruitee,cyclomediatechnology
-Nobleo Technology,recruitee,nobleotechnology
-Vandebron,recruitee,vandebron
-ABN AMRO,smartrecruiters,ABNAMROBank
-Booking.com,smartrecruiters,Booking
-Coolblue,smartrecruiters,Coolblue
-ING,smartrecruiters,ING-Bank
-NXP Semiconductors,smartrecruiters,NXP
-Philips,smartrecruiters,Philips
-Prodrive Technologies,smartrecruiters,ProdriveTechnologies
-Signify,smartrecruiters,Signify
-TomTom,smartrecruiters,TomTomNV
-Wolters Kluwer,smartrecruiters,WoltersKluwer
-bol.com,smartrecruiters,Bol
-ASML,careers_page,https://www.asml.com/en/careers
-Mollie,careers_page,https://jobs.mollie.com/
-Optiver,careers_page,https://optiver.com/working-at-optiver/career-opportunities/
-Picnic,careers_page,https://jobs.picnic.app/en/
+name,source,token,confidence
+AFAS Software,careers_page,https://www.werkenbijafas.nl/,detected
+ASML,careers_page,https://www.asml.com/en/careers,detected
+Aiven,careers_page,https://aiven.io/careers,detected
+Anteryon,careers_page,https://anteryon.com/careers,auto
+Axelera AI,careers_page,https://axelera.ai/careers,auto
+Bynder,careers_page,https://careers.bynder.com,detected
+CM.com,careers_page,https://jobs.cm.com,detected
+Carbyon,careers_page,https://careers.carbyon.com/,auto
+Channable,careers_page,https://jobs.channable.com/,detected
+DAF Trucks,careers_page,https://www.daf.com/en/working-at-daf,auto
+Demcon,careers_page,https://careersatdemcon.com/,auto
+EFFECT Photonics,careers_page,https://effectphotonics.com/about-us/careers-2024/,auto
+Ebusco,careers_page,https://careers.ebusco.com/,auto
+Exact,careers_page,https://www.exact.com/careers,auto
+Guerrilla Games,careers_page,https://www.guerrilla-games.com/join,detected
+HighTechXL,careers_page,https://www.hightechxl.com/careers/,auto
+Itility,careers_page,https://careers.itility.nl/,auto
+KMWE,careers_page,https://www.werkenbijkmwe.com/vacatures/,auto
+Lightspeed,careers_page,https://www.lightspeedhq.com/careers/,detected
+Lightyear,careers_page,https://lightyear.one/careers,auto
+Mambu,careers_page,https://mambu.com/en/careers,auto
+Marel Poultry,careers_page,https://jbtmarel.com/,auto
+Miro,careers_page,https://miro.com/careers/,detected
+Mollie,careers_page,https://jobs.mollie.com/,detected
+Nationale-Nederlanden,careers_page,https://www.nn-group.com/careers,detected
+Nedap,careers_page,https://www.nedap.com/en/careers,detected
+Nexperia,careers_page,https://www.nexperia.com/careers,auto
+Optiver,careers_page,https://optiver.com/working-at-optiver/career-opportunities/,auto
+Otrium,careers_page,https://www.otrium.com/careers,detected
+Picnic,careers_page,https://jobs.picnic.app/en/,detected
+Prodrive Technologies,careers_page,https://prodrive-technologies.com/careers/vacancies,auto
+Prosus,careers_page,https://jobs.eu.lever.co/prosus,detected
+Randstad NL,careers_page,https://www.randstad.nl/vacatures,detected
+Rituals,careers_page,https://careers.rituals.com/en-NL/,detected
+SMART Photonics,careers_page,https://careers.smartphotonics.nl/,auto
+Sioux Technologies,careers_page,https://www.sioux.eu/careers,auto
+SnappCar,careers_page,https://www.snappcar.nl/careers,detected
+Swapfiets,careers_page,https://jobs.swapfiets.com/,detected
+TU Eindhoven,careers_page,https://www.tue.nl/en/working-at-tue/vacancy-overview,auto
+Temper,careers_page,https://go.temper.works/en-nl,detected
+Templafy,careers_page,https://www.templafy.com/home/about-us/careers/,detected
+Treatwell,careers_page,https://jobs.treatwell.com,detected
+Trengo,careers_page,https://trengo.com/careers,auto
+Uber NL,careers_page,https://jobs.uber.com/en/,detected
+Ultimaker,careers_page,https://ultimaker.com/careers/,auto
+VDL ETG,careers_page,https://www.vdletg.com/en/careers/bbl-opleiding,auto
+VDL Groep,careers_page,https://www.werkenbijvdl.nl/en/vacancies?utm_source=vdlgroep&utm_medium=menu&utm_campaign=werkenbij,auto
+Vanderlande,careers_page,https://careers.vanderlande.com/,auto
+Vinted,careers_page,https://careers.vinted.com/,auto
+YoungCapital,careers_page,https://www.youngcapital.nl/vacatures,detected
+Action,greenhouse,action,auto
+Adyen,greenhouse,adyen,manual
+Backbase,greenhouse,backbase,auto
+Catawiki,greenhouse,catawiki,auto
+Cloudflare,greenhouse,cloudflare,manual
+Contentful,greenhouse,contentful,auto
+Crisp,greenhouse,crisp,auto
+Databricks,greenhouse,databricks,auto
+Datadog,greenhouse,datadog,manual
+Elastic,greenhouse,elastic,manual
+Flow Traders,greenhouse,flowtraders,auto
+GitLab,greenhouse,gitlab,manual
+HelloFresh,greenhouse,hellofresh,auto
+IMC Trading,greenhouse,imc,auto
+Journee,greenhouse,journee,auto
+MessageBird,greenhouse,bird,auto
+Okta,greenhouse,okta,auto
+Packlink,greenhouse,packlink,auto
+PagerDuty,greenhouse,pagerduty,auto
+Sendbird,greenhouse,sendbird,auto
+Sendcloud,greenhouse,sendcloud,auto
+Spryker,greenhouse,spryker,auto
+Stripe,greenhouse,stripe,manual
+TMC,greenhouse,tmc,auto
+Travix,greenhouse,travix,auto
+Twilio,greenhouse,twilio,auto
+Wrike,greenhouse,wrike,auto
+Mendix,lever,mendix,auto
+Netflix,lever,netflix,manual
+Prosus,lever,prosus,detected
+Benchmark Electronics,recruitee,benchmarkelectronics,auto
+Bunq,recruitee,bunq,auto
+ChannelEngine,recruitee,channelengine,auto
+Cyclomedia,recruitee,cyclomediatechnology,auto
+Helloprint,recruitee,helloprint,auto
+IG&H,recruitee,igh,auto
+Neways Electronics,recruitee,neways,auto
+Nobleo Technology,recruitee,nobleotechnology,auto
+Seenons,recruitee,seenons,auto
+Settels Savenije,recruitee,sttls,auto
+Vandebron,recruitee,vandebron,auto
+ABN AMRO,smartrecruiters,ABNAMROBank,auto
+Booking.com,smartrecruiters,Booking,auto
+Coolblue,smartrecruiters,Coolblue,auto
+DAF Trucks,smartrecruiters,DAFTrucks,auto
+Ebusco,smartrecruiters,Ebusco,auto
+Exact Software,smartrecruiters,Exact,auto
+ING,smartrecruiters,ING-Bank,auto
+JustEat Takeaway,smartrecruiters,JustEatTakeaway,auto
+Keysight Technologies,smartrecruiters,KeysightTechnologies,auto
+Kulicke and Soffa,smartrecruiters,KulickeAndSoffa,auto
+NN Group,smartrecruiters,NNGroup,auto
+NXP Semiconductors,smartrecruiters,NXP,auto
+Nexperia,smartrecruiters,Nexperia,auto
+Philips,smartrecruiters,Philips,auto
+Prodrive Technologies,smartrecruiters,ProdriveTechnologies,auto
+Randstad,smartrecruiters,Randstad,auto
+Sana Commerce,smartrecruiters,sanacommerce,auto
+Signify,smartrecruiters,Signify,auto
+Sioux Technologies,smartrecruiters,SiouxTechnologies,auto
+TU Eindhoven,smartrecruiters,TUEindhoven,auto
+Thermo Fisher Eindhoven,smartrecruiters,ThermoFisher,auto
+TomTom,smartrecruiters,TomTomNV,auto
+TomTom (alt),smartrecruiters,TomTom,auto
+VDL Groep,smartrecruiters,VDL,auto
+Virtuagym,smartrecruiters,virtuagym,auto
+VodafoneZiggo,smartrecruiters,VodafoneZiggo,auto
+Wolters Kluwer,smartrecruiters,WoltersKluwer,auto
+bol.com,smartrecruiters,Bol,auto
