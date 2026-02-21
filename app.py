@@ -1064,7 +1064,9 @@ def ui(
     countries = unique([j.get("country") for j in all_jobs if j.get("country")])
     country_jobs = [j for j in all_jobs if soft_country_match(j, country)] if country else all_jobs
     cities = unique([j.get("city") for j in country_jobs if j.get("city")])
-    all_visible = [j for j in country_jobs if not city or (j.get("city") or "").lower() == city.lower()]
+    all_visible = [j for j in country_jobs
+                   if not j.get("_placeholder")
+                   and (not city or (j.get("city") or "").lower() == city.lower())]
     total_real = sum(1 for j in all_visible if not j.get("_placeholder"))
     total_visible = len(all_visible)
     total_pages = (total_visible + PER_PAGE - 1) // PER_PAGE if total_visible else 1

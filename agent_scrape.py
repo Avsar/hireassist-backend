@@ -22,12 +22,15 @@ Via Docker:
 """
 import argparse
 import json
+import os
 import re
 import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, Page, Response
@@ -39,6 +42,16 @@ try:
     _HAS_INTEL = True
 except ImportError:
     _HAS_INTEL = False
+
+# Load .env for API keys
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Anthropic API for AI fallback scraper (Tier 2)
+_ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 DB_FILE = get_db_path()
 
@@ -142,6 +155,61 @@ def _detect_ats_domain(url: str) -> str | None:
         if domain in netloc:
             return name
     return None
+
+
+_UPGRADABLE_ATS = {"greenhouse", "lever", "smartrecruiters", "recruitee"}
+
+
+def _extract_ats_token(ats_name: str, url: str) -> str | None:
+    """Extract the ATS board token from a portal redirect URL."""
+    parsed = urlparse(url)
+    netloc = parsed.netloc.lower()
+    path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+
+    if ats_name == "greenhouse" and "greenhouse.io" in netloc:
+        # boards.greenhouse.io/{token} or boards.greenhouse.io/{token}/jobs/...
+        return path_parts[0] if path_parts else None
+
+    if ats_name == "lever" and "lever.co" in netloc:
+        # jobs.lever.co/{token} or jobs.eu.lever.co/{token}
+        return path_parts[0] if path_parts else None
+
+    if ats_name == "smartrecruiters" and "smartrecruiters.com" in netloc:
+        # jobs.smartrecruiters.com/{token}
+        return path_parts[0] if path_parts else None
+
+    if ats_name == "recruitee" and "recruitee.com" in netloc:
+        # {token}.recruitee.com/o or {token}.recruitee.com
+        subdomain = netloc.split(".recruitee.com")[0]
+        return subdomain if subdomain and subdomain != "www" else None
+
+    return None
+
+
+def _upgrade_company_source(conn: sqlite3.Connection, company_name: str,
+                            old_token: str, new_source: str, new_token: str):
+    """Upgrade a careers_page company to a proper ATS source in the DB."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Check if the new source+token already exists (avoid UNIQUE constraint violation)
+    existing = conn.execute(
+        "SELECT id FROM companies WHERE source=? AND token=?",
+        (new_source, new_token),
+    ).fetchone()
+    if existing:
+        # ATS entry already exists -- just deactivate the old careers_page row
+        conn.execute(
+            "UPDATE companies SET active=0 WHERE source='careers_page' AND token=?",
+            (old_token,),
+        )
+    else:
+        # Update in-place: switch source and token
+        conn.execute(
+            """UPDATE companies SET source=?, token=?, last_verified_at=?
+               WHERE name=? AND source='careers_page' AND token=?""",
+            (new_source, new_token, now, company_name, old_token),
+        )
+    conn.commit()
+    print(f"    >> UPGRADED: {company_name}: careers_page -> {new_source} (token: {new_token})")
 
 
 def _is_workday_page(url: str, html: str) -> bool:
@@ -663,6 +731,203 @@ def _scrape_portal_by_type(page: Page, ats_name: str, portal_url: str, debug: bo
 
 
 # ---------------------------------------------------------------------------
+# Tier 1: Recruitee custom domain detection
+# ---------------------------------------------------------------------------
+
+def _detect_recruitee_custom_domain(html: str) -> bool:
+    """Detect Recruitee custom domains by looking for /o/ link pattern."""
+    # Recruitee uses /o/job-slug URL pattern universally
+    return bool(re.search(r'href=["\'][^"\']*?/o/[a-z0-9][a-z0-9\-]+["\']', html, re.IGNORECASE))
+
+
+def _scrape_recruitee_api(base_url: str, debug: bool = False) -> list[dict]:
+    """Call Recruitee API at a custom domain to get job listings."""
+    parsed = urlparse(base_url)
+    api_url = f"{parsed.scheme}://{parsed.netloc}/api/offers/"
+    if debug:
+        print(f"    [recruitee-api] Trying {api_url}")
+    try:
+        req = Request(api_url, headers={"Accept": "application/json",
+                                        "User-Agent": "Mozilla/5.0"})
+        resp = urlopen(req, timeout=15)
+        data = json.loads(resp.read().decode("utf-8"))
+        offers = data.get("offers", [])
+        jobs = []
+        for j in offers:
+            title = j.get("title", "") or ""
+            location = j.get("location", "") or ""
+            careers_url = j.get("careers_url", "") or j.get("url", "") or ""
+            if title:
+                jobs.append({
+                    "title": title,
+                    "location_raw": location,
+                    "apply_url": careers_url,
+                })
+        if debug:
+            print(f"    [recruitee-api] Got {len(jobs)} jobs from API")
+        return jobs
+    except Exception as e:
+        if debug:
+            print(f"    [recruitee-api] Failed: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: Ashby API support
+# ---------------------------------------------------------------------------
+
+def _detect_ashby_token(html: str) -> str | None:
+    """Detect Ashby job board from page HTML and extract the board token."""
+    # Look for ashbyhq.com links or API references
+    m = re.search(r'ashbyhq\.com/(?:posting-api/job-board/)?([a-zA-Z0-9_\-]+)', html)
+    if m:
+        return m.group(1)
+    # Also check for Ashby embed script references
+    m = re.search(r'api\.ashbyhq\.com/posting-api/job-board/([a-zA-Z0-9_\-]+)', html)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _scrape_ashby_api(token: str, debug: bool = False) -> list[dict]:
+    """Call Ashby posting API to get job listings."""
+    api_url = f"https://api.ashbyhq.com/posting-api/job-board/{token}"
+    if debug:
+        print(f"    [ashby-api] Trying {api_url}")
+    try:
+        req = Request(api_url, headers={"Accept": "application/json",
+                                        "User-Agent": "Mozilla/5.0"})
+        resp = urlopen(req, timeout=15)
+        data = json.loads(resp.read().decode("utf-8"))
+        raw_jobs = data.get("jobs", [])
+        jobs = []
+        for j in raw_jobs:
+            title = j.get("title", "") or ""
+            location = j.get("location", "") or ""
+            job_url = j.get("jobUrl", "") or ""
+            if title:
+                jobs.append({
+                    "title": title,
+                    "location_raw": location,
+                    "apply_url": job_url,
+                })
+        if debug:
+            print(f"    [ashby-api] Got {len(jobs)} jobs from API")
+        return jobs
+    except Exception as e:
+        if debug:
+            print(f"    [ashby-api] Failed: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: AI fallback scraper (Claude Haiku)
+# ---------------------------------------------------------------------------
+
+def _scrape_with_ai(html: str, page_url: str, debug: bool = False) -> list[dict]:
+    """Use Claude Haiku to extract job listings from arbitrary HTML."""
+    if not _ANTHROPIC_API_KEY:
+        if debug:
+            print("    [ai-fallback] No ANTHROPIC_API_KEY, skipping")
+        return []
+
+    # Trim HTML to reduce token usage -- keep body content only
+    soup = BeautifulSoup(html, "html.parser")
+    # Remove script, style, nav, header, footer elements
+    for tag in soup.find_all(["script", "style", "nav", "header", "footer", "noscript", "svg"]):
+        tag.decompose()
+    body = soup.find("body")
+    text = body.get_text(separator="\n", strip=True) if body else soup.get_text(separator="\n", strip=True)
+    # Limit to ~15K chars to control cost
+    text = text[:15000]
+
+    if len(text.strip()) < 100:
+        if debug:
+            print("    [ai-fallback] Page text too short, skipping")
+        return []
+
+    prompt = f"""Extract ALL job openings from this career page text. For each job, return a JSON object with:
+- "title": job title
+- "location": location (city, country) or "" if unknown
+- "url": full URL to the job posting, or "" if not available
+
+Return ONLY a JSON array. If there are no jobs, return [].
+Do NOT include open applications, blog posts, or team pages.
+
+Page URL: {page_url}
+
+Page text:
+{text}"""
+
+    if debug:
+        print(f"    [ai-fallback] Sending {len(text)} chars to Claude Haiku")
+
+    try:
+        payload = json.dumps({
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode("utf-8")
+
+        req = Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": _ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
+        )
+        resp = urlopen(req, timeout=30)
+        result = json.loads(resp.read().decode("utf-8"))
+        content = result.get("content", [{}])[0].get("text", "")
+
+        # Extract JSON array from response
+        # Find the first [ and last ] to handle any surrounding text
+        start = content.find("[")
+        end = content.rfind("]")
+        if start == -1 or end == -1:
+            if debug:
+                print(f"    [ai-fallback] No JSON array in response")
+            return []
+
+        raw_jobs = json.loads(content[start:end + 1])
+        jobs = []
+        for j in raw_jobs:
+            title = j.get("title", "") or ""
+            location = j.get("location", "") or ""
+            url = j.get("url", "") or ""
+            # Resolve relative URLs
+            if url and not url.startswith("http"):
+                url = urljoin(page_url, url)
+            if title and title.lower() not in ("open application", "open sollicitatie"):
+                jobs.append({
+                    "title": title,
+                    "location_raw": location,
+                    "apply_url": url or page_url,
+                })
+
+        if debug:
+            print(f"    [ai-fallback] AI extracted {len(jobs)} jobs")
+        return jobs
+
+    except HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:200] if hasattr(e, "read") else ""
+        if "credit balance" in body.lower() or "billing" in body.lower():
+            if debug:
+                print(f"    [ai-fallback] API credits exhausted, skipping")
+        else:
+            if debug:
+                print(f"    [ai-fallback] HTTP {e.code}: {body}")
+        return []
+    except Exception as e:
+        if debug:
+            print(f"    [ai-fallback] Failed: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Main scrape orchestrator
 # ---------------------------------------------------------------------------
 
@@ -758,6 +1023,38 @@ def scrape_career_page(page: Page, career_url: str,
         if debug:
             print(f"    [strategy] Scroll: {len(jobs)} jobs")
         return jobs, career_url, "html"
+
+    # Step 7: Recruitee custom domain detection (Tier 1)
+    # Refresh html after possible navigation in earlier steps
+    try:
+        page.goto(career_url, wait_until="domcontentloaded", timeout=20000)
+        page.wait_for_timeout(2000)
+        html = page.content()
+    except Exception:
+        pass
+    if _detect_recruitee_custom_domain(html):
+        if debug:
+            print(f"    [strategy] Recruitee custom domain detected (/o/ links)")
+        jobs = _scrape_recruitee_api(career_url, debug=debug)
+        if jobs:
+            return jobs, career_url, "recruitee-custom"
+
+    # Step 8: Ashby detection (Tier 1)
+    ashby_token = _detect_ashby_token(html)
+    if ashby_token:
+        if debug:
+            print(f"    [strategy] Ashby detected (token: {ashby_token})")
+        jobs = _scrape_ashby_api(ashby_token, debug=debug)
+        if jobs:
+            return jobs, career_url, "ashby"
+
+    # Step 9: AI fallback (Tier 2) -- send page to Claude Haiku
+    if _ANTHROPIC_API_KEY:
+        if debug:
+            print(f"    [strategy] Trying AI fallback (Claude Haiku)")
+        jobs = _scrape_with_ai(html, career_url, debug=debug)
+        if jobs:
+            return jobs, career_url, "ai-fallback"
 
     # All strategies exhausted
     if debug:
@@ -873,6 +1170,7 @@ def run(company_filter: str | None = None, dry_run: bool = False,
         "success_zero_jobs": 0,
         "failed": 0,
         "total_jobs_inserted": 0,
+        "upgraded_to_ats": 0,
     }
 
     with sync_playwright() as pw:
@@ -912,6 +1210,17 @@ def run(company_filter: str | None = None, dry_run: bool = False,
                     ).fetchone()[0]
                     print(f"    -> Scrape failed, preserved {existing} old jobs for {company_name}")
                 continue
+
+            # Auto-upgrade: if career page redirected to a supported ATS,
+            # update the company source+token so future runs use the API
+            if portal_type in _UPGRADABLE_ATS and not dry_run:
+                ats_token = _extract_ats_token(portal_type, final_url)
+                if ats_token:
+                    _upgrade_company_source(
+                        conn, company_name, career_url,
+                        portal_type, ats_token,
+                    )
+                    stats["upgraded_to_ats"] += 1
 
             if jobs:
                 if debug:
@@ -954,6 +1263,8 @@ def run(company_filter: str | None = None, dry_run: bool = False,
     print(f"  Success with 0 jobs:         {stats['success_zero_jobs']}")
     print(f"  Failed (errors):             {stats['failed']}")
     print(f"  Total jobs inserted:         {stats['total_jobs_inserted']}")
+    if stats["upgraded_to_ats"]:
+        print(f"  Upgraded to ATS:             {stats['upgraded_to_ats']}")
     if dry_run:
         print(f"\n  (dry-run -- nothing written to DB)")
     print(f"{'='*50}")

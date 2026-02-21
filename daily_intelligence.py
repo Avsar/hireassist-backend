@@ -6,25 +6,41 @@ Runs the full pipeline in sequence:
   2. Scrape (agent_scrape.py) -- scrape career pages
   3. ATS Sync (sync_ats_jobs.py) -- sync ATS job listings into jobs table
   4. Stats (job_intel.py) -- compute daily stats + momentum
+  5. Export (export_bundle.py) -- export DB to JSON bundle
+  6. Push to Render -- POST bundle to live site
 
 Usage:
     python daily_intelligence.py                          # full pipeline
     python daily_intelligence.py --skip-discover          # skip OSM discovery
     python daily_intelligence.py --skip-scrape            # skip career scraping
     python daily_intelligence.py --stats-only             # only recompute stats
+    python daily_intelligence.py --skip-push              # skip Render push
     python daily_intelligence.py --region "Amsterdam"     # pass region to discovery
 """
 
 import argparse
+import json
+import os
 import sqlite3
 import subprocess
 import sys
 import time
 from datetime import date
 from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+
 from db_config import get_db_path
 
+# Load .env if python-dotenv available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 DB_FILE = get_db_path()
+PROJECT_DIR = Path(__file__).parent
 
 
 def run_step(label: str, cmd: list) -> bool:
@@ -35,7 +51,7 @@ def run_step(label: str, cmd: list) -> bool:
     print(f"{'=' * 60}\n")
 
     start = time.time()
-    result = subprocess.run(cmd, cwd=str(Path(__file__).parent))
+    result = subprocess.run(cmd, cwd=str(PROJECT_DIR))
     elapsed = time.time() - start
 
     status = "OK" if result.returncode == 0 else "FAILED"
@@ -76,11 +92,83 @@ def compute_stats():
     print(f"\n  [OK] Stats computed")
 
 
+def export_bundle() -> str | None:
+    """Export DB to bundle JSON. Returns file path on success, None on failure."""
+    print(f"\n{'=' * 60}")
+    print(f"  STEP: Export bundle")
+    print(f"{'=' * 60}\n")
+
+    try:
+        from export_bundle import export_bundle as _do_export
+        out_path = str(PROJECT_DIR / "data" / "seed" / "bundle.json")
+        _do_export(out_path)
+        size_mb = Path(out_path).stat().st_size / (1024 * 1024)
+        print(f"  Bundle: {out_path} ({size_mb:.1f} MB)")
+        print(f"\n  [OK] Export complete")
+        return out_path
+    except Exception as e:
+        print(f"  [FAILED] Export: {e}")
+        return None
+
+
+def push_to_render(bundle_path: str) -> bool:
+    """POST bundle JSON to Render's /admin/import-bundle endpoint."""
+    render_url = os.environ.get("RENDER_URL", "").rstrip("/")
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+
+    if not render_url:
+        print("\n  RENDER_URL not set in .env -- skipping push")
+        return True  # Not a failure, just skipped
+    if not admin_token:
+        print("\n  ADMIN_TOKEN not set in .env -- skipping push")
+        return True
+
+    print(f"\n{'=' * 60}")
+    print(f"  STEP: Push to Render")
+    print(f"  URL:  {render_url}/admin/import-bundle")
+    print(f"{'=' * 60}\n")
+
+    start = time.time()
+    try:
+        bundle_data = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
+        payload = json.dumps(bundle_data).encode("utf-8")
+
+        req = Request(
+            f"{render_url}/admin/import-bundle",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Admin-Token": admin_token,
+            },
+            method="POST",
+        )
+        resp = urlopen(req, timeout=120)
+        elapsed = time.time() - start
+        result = json.loads(resp.read().decode("utf-8"))
+
+        print(f"  [OK] Push successful ({elapsed:.1f}s)")
+        summary = result.get("summary", {})
+        for table, count in summary.items():
+            print(f"    {table}: {count}")
+        return True
+
+    except HTTPError as e:
+        print(f"  [FAILED] HTTP {e.code}: {e.read().decode('utf-8', errors='replace')[:200]}")
+        return False
+    except URLError as e:
+        print(f"  [FAILED] Connection error: {e.reason}")
+        return False
+    except Exception as e:
+        print(f"  [FAILED] Push error: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Daily intelligence pipeline")
     parser.add_argument("--skip-discover", action="store_true", help="Skip OSM discovery")
     parser.add_argument("--skip-scrape", action="store_true", help="Skip career page scraping")
     parser.add_argument("--stats-only", action="store_true", help="Only recompute stats")
+    parser.add_argument("--skip-push", action="store_true", help="Skip Render push")
     parser.add_argument("--region", default="Netherlands", help="Region for discovery (default: Netherlands)")
     args = parser.parse_args()
 
@@ -110,6 +198,17 @@ def main():
     # Step 4: Stats
     compute_stats()
     results["stats"] = True
+
+    # Step 5: Export bundle
+    bundle_path = export_bundle()
+    results["export"] = bundle_path is not None
+
+    # Step 6: Push to Render
+    if not args.skip_push and bundle_path:
+        ok = push_to_render(bundle_path)
+        results["push"] = ok
+    elif args.skip_push:
+        print("\n  Skipping Render push (--skip-push)")
 
     # Final summary
     elapsed = time.time() - start
