@@ -43,6 +43,7 @@ except ImportError:
     pass
 
 from osm_discover import discover_osm
+from google_discover import discover_google
 from candidate_filter import score_candidate, is_candidate_eligible
 from db_config import get_db_path
 
@@ -506,7 +507,7 @@ def store_candidates(conn: sqlite3.Connection, candidates: list[dict]) -> int:
                 c.get("region", ""),
                 c.get("source", "osm"),
                 c.get("osm_id", ""),
-                json.dumps(c.get("osm_tags", {}), ensure_ascii=False),
+                json.dumps(c.get("raw_json") or c.get("osm_tags", {}), ensure_ascii=False),
                 now,
                 c.get("_score"),
                 domain,
@@ -747,15 +748,18 @@ def run(
         "errors": 0,
     }
 
-    # ---- Step 1: Fetch candidates from OSM ----
-    if source != "osm":
-        logger.error(f"Unknown source '{source}'. Currently only 'osm' is supported.")
+    # ---- Step 1: Fetch candidates ----
+    if source == "osm":
+        raw = discover_osm(region, limit=limit * 3)
+    elif source == "google":
+        raw = discover_google(region)
+    else:
+        logger.error(f"Unknown source '{source}'. Use 'osm' or 'google'.")
         conn.close()
         return
 
-    raw = discover_osm(region, limit=limit * 3)
-    stats["fetched_from_osm"] = len(raw)
-    logger.info(f"Fetched {len(raw)} candidates from OSM")
+    stats["fetched_from_osm"] = len(raw)  # reuse counter name for compatibility
+    logger.info(f"Fetched {len(raw)} candidates from {source}")
 
     if not raw:
         logger.info("No candidates found. Try a broader region.")
@@ -992,8 +996,8 @@ if __name__ == "__main__":
         help="Region to search (e.g. Eindhoven, Noord-Brabant, Netherlands)",
     )
     parser.add_argument(
-        "--source", type=str, default="osm", choices=["osm"],
-        help="Discovery source (default: osm)",
+        "--source", type=str, default="osm", choices=["osm", "google"],
+        help="Discovery source: osm (free) or google (Places API, needs key)",
     )
     parser.add_argument(
         "--limit", type=int, default=200,

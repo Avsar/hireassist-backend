@@ -1,8 +1,8 @@
 {
  "meta": {
-  "exported_at": "2026-02-21T13:23:26.724065+00:00",
+  "exported_at": "2026-02-21T14:34:34.961725+00:00",
   "tables": {
-   "companies": 170,
+   "companies": 208,
    "scraped_jobs": 458,
    "jobs": 5897,
    "company_daily_stats": 73
@@ -715,7 +715,7 @@
     "name": "Prosus",
     "source": "lever",
     "token": "prosus",
-    "active": 1,
+    "active": 0,
     "confidence": "detected",
     "discovered_at": "2026-02-12T21:34:57.296842+00:00",
     "last_verified_at": "2026-02-12T21:34:57.296842+00:00"
@@ -1709,6 +1709,386 @@
     "confidence": "auto",
     "discovered_at": "2026-02-21T10:52:47.824775+00:00",
     "last_verified_at": "2026-02-21T10:52:47.824775+00:00"
+   },
+   {
+    "id": 179,
+    "name": "Wolfpack IT",
+    "source": "careers_page",
+    "token": "https://wolfpackit.nl/join-the-pack-3/",
+    "active": 1,
+    "confidence": "manual",
+    "discovered_at": "2026-02-21 13:28:04",
+    "last_verified_at": null
+   },
+   {
+    "id": 180,
+    "name": "3Dimerce BV",
+    "source": "smartrecruiters",
+    "token": "3dimerce-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:12:30.592346+00:00",
+    "last_verified_at": "2026-02-21T14:12:30.592346+00:00"
+   },
+   {
+    "id": 181,
+    "name": "3T B.V. (Eindhoven)",
+    "source": "smartrecruiters",
+    "token": "3teindhovenhq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:12:49.217230+00:00",
+    "last_verified_at": "2026-02-21T14:12:49.217230+00:00"
+   },
+   {
+    "id": 182,
+    "name": "4IP Solutions",
+    "source": "smartrecruiters",
+    "token": "4ipsolutionshq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:13:11.762006+00:00",
+    "last_verified_at": "2026-02-21T14:13:11.762006+00:00"
+   },
+   {
+    "id": 183,
+    "name": "ACA Fashion Software",
+    "source": "smartrecruiters",
+    "token": "acafashionsoftware-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:13:41.888636+00:00",
+    "last_verified_at": "2026-02-21T14:13:41.888636+00:00"
+   },
+   {
+    "id": 184,
+    "name": "ACE engineering & consultancy",
+    "source": "recruitee",
+    "token": "ACE",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:15:04.234628+00:00",
+    "last_verified_at": "2026-02-21T14:15:04.234628+00:00"
+   },
+   {
+    "id": 185,
+    "name": "ACESecure B.V.",
+    "source": "smartrecruiters",
+    "token": "acesecure-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:15:16.016937+00:00",
+    "last_verified_at": "2026-02-21T14:15:16.016937+00:00"
+   },
+   {
+    "id": 186,
+    "name": "APEX Consulting",
+    "source": "greenhouse",
+    "token": "APEX",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:15:41.792123+00:00",
+    "last_verified_at": "2026-02-21T14:15:41.792123+00:00"
+   },
+   {
+    "id": 187,
+    "name": "Accelonix BV",
+    "source": "smartrecruiters",
+    "token": "accelonix-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:16:29.627575+00:00",
+    "last_verified_at": "2026-02-21T14:16:29.627575+00:00"
+   },
+   {
+    "id": 188,
+    "name": "Address | Ivium Technologies BV",
+    "source": "smartrecruiters",
+    "token": "address",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:17:13.009908+00:00",
+    "last_verified_at": "2026-02-21T14:17:13.009908+00:00"
+   },
+   {
+    "id": 189,
+    "name": "Allseas",
+    "source": "smartrecruiters",
+    "token": "Allseas",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:17:36.258046+00:00",
+    "last_verified_at": "2026-02-21T14:17:36.258046+00:00"
+   },
+   {
+    "id": 190,
+    "name": "Amaris Consulting - Eindhoven (Mantu Group)",
+    "source": "smartrecruiters",
+    "token": "amarishq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:18:43.857071+00:00",
+    "last_verified_at": "2026-02-21T14:18:43.857071+00:00"
+   },
+   {
+    "id": 191,
+    "name": "Antea Group Nederland",
+    "source": "recruitee",
+    "token": "anteagroup",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:19:03.930738+00:00",
+    "last_verified_at": "2026-02-21T14:19:03.930738+00:00"
+   },
+   {
+    "id": 192,
+    "name": "Anubiss B.V.",
+    "source": "smartrecruiters",
+    "token": "anubiss",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:19:16.288687+00:00",
+    "last_verified_at": "2026-02-21T14:19:16.288687+00:00"
+   },
+   {
+    "id": 193,
+    "name": "Applied Microelectronics \"AME\" BV",
+    "source": "recruitee",
+    "token": "ame",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:19:56.315559+00:00",
+    "last_verified_at": "2026-02-21T14:19:56.315559+00:00"
+   },
+   {
+    "id": 194,
+    "name": "Author-e BV",
+    "source": "smartrecruiters",
+    "token": "author-ehq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:20:10.178725+00:00",
+    "last_verified_at": "2026-02-21T14:20:10.178725+00:00"
+   },
+   {
+    "id": 195,
+    "name": "Aveco de Bondt",
+    "source": "recruitee",
+    "token": "avecodebondt",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:20:40.025760+00:00",
+    "last_verified_at": "2026-02-21T14:20:40.025760+00:00"
+   },
+   {
+    "id": 196,
+    "name": "BOLD Software Solutions",
+    "source": "greenhouse",
+    "token": "BOLD",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:21:38.117818+00:00",
+    "last_verified_at": "2026-02-21T14:21:38.117818+00:00"
+   },
+   {
+    "id": 197,
+    "name": "BUKO Infrasupport",
+    "source": "recruitee",
+    "token": "bukoinfrasupport",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:22:12.547741+00:00",
+    "last_verified_at": "2026-02-21T14:22:12.547741+00:00"
+   },
+   {
+    "id": 198,
+    "name": "Bechtle B.V.",
+    "source": "smartrecruiters",
+    "token": "Bechtlehq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:22:24.721770+00:00",
+    "last_verified_at": "2026-02-21T14:22:24.721770+00:00"
+   },
+   {
+    "id": 199,
+    "name": "BenQ Europe",
+    "source": "smartrecruiters",
+    "token": "benq-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:22:36.813909+00:00",
+    "last_verified_at": "2026-02-21T14:22:36.813909+00:00"
+   },
+   {
+    "id": 200,
+    "name": "BlueAlp",
+    "source": "smartrecruiters",
+    "token": "bluealphq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:24:28.905194+00:00",
+    "last_verified_at": "2026-02-21T14:24:28.905194+00:00"
+   },
+   {
+    "id": 201,
+    "name": "Bots Electronics",
+    "source": "smartrecruiters",
+    "token": "botselectronicshq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:25:08.240695+00:00",
+    "last_verified_at": "2026-02-21T14:25:08.240695+00:00"
+   },
+   {
+    "id": 202,
+    "name": "BouwRisk",
+    "source": "smartrecruiters",
+    "token": "bouwriskhq",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:25:26.513504+00:00",
+    "last_verified_at": "2026-02-21T14:25:26.513504+00:00"
+   },
+   {
+    "id": 203,
+    "name": "CQM",
+    "source": "smartrecruiters",
+    "token": "CQM-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:26:46.322604+00:00",
+    "last_verified_at": "2026-02-21T14:26:46.322604+00:00"
+   },
+   {
+    "id": 204,
+    "name": "CUbIQ Technologies",
+    "source": "smartrecruiters",
+    "token": "CUbIQ",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:27:33.955518+00:00",
+    "last_verified_at": "2026-02-21T14:27:33.955518+00:00"
+   },
+   {
+    "id": 205,
+    "name": "Capgemini Engineering",
+    "source": "smartrecruiters",
+    "token": "capgemini",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:28:05.770581+00:00",
+    "last_verified_at": "2026-02-21T14:28:05.770581+00:00"
+   },
+   {
+    "id": 206,
+    "name": "CleanLease locatie Eindhoven 1",
+    "source": "smartrecruiters",
+    "token": "nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:28:57.126523+00:00",
+    "last_verified_at": "2026-02-21T14:28:57.126523+00:00"
+   },
+   {
+    "id": 207,
+    "name": "CleanLease locatie Eindhoven 2",
+    "source": "smartrecruiters",
+    "token": "cleanleaselocatieeindhoven2",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:29:26.969809+00:00",
+    "last_verified_at": "2026-02-21T14:29:26.969809+00:00"
+   },
+   {
+    "id": 208,
+    "name": "Cloudbear",
+    "source": "smartrecruiters",
+    "token": "cloudbear-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:29:38.768618+00:00",
+    "last_verified_at": "2026-02-21T14:29:38.768618+00:00"
+   },
+   {
+    "id": 209,
+    "name": "Connect Your Hosting",
+    "source": "smartrecruiters",
+    "token": "connect-your-hosting",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:30:27.055012+00:00",
+    "last_verified_at": "2026-02-21T14:30:27.055012+00:00"
+   },
+   {
+    "id": 210,
+    "name": "Croonwolter&dros",
+    "source": "smartrecruiters",
+    "token": "croonwolterendros-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:30:45.469973+00:00",
+    "last_verified_at": "2026-02-21T14:30:45.469973+00:00"
+   },
+   {
+    "id": 211,
+    "name": "DDMG",
+    "source": "smartrecruiters",
+    "token": "DDMG",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:31:28.658401+00:00",
+    "last_verified_at": "2026-02-21T14:31:28.658401+00:00"
+   },
+   {
+    "id": 212,
+    "name": "Data Consultancy Exploring Data",
+    "source": "recruitee",
+    "token": "Data",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:32:07.128009+00:00",
+    "last_verified_at": "2026-02-21T14:32:07.128009+00:00"
+   },
+   {
+    "id": 213,
+    "name": "DataLyzer International (Europe)",
+    "source": "smartrecruiters",
+    "token": "datalyzer-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:33:28.754465+00:00",
+    "last_verified_at": "2026-02-21T14:33:28.754465+00:00"
+   },
+   {
+    "id": 214,
+    "name": "Databrydge B.V.",
+    "source": "smartrecruiters",
+    "token": "Databrydge-nl",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:33:40.985686+00:00",
+    "last_verified_at": "2026-02-21T14:33:40.985686+00:00"
+   },
+   {
+    "id": 215,
+    "name": "Datacation B.V.",
+    "source": "smartrecruiters",
+    "token": "datacation",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:33:56.030253+00:00",
+    "last_verified_at": "2026-02-21T14:33:56.030253+00:00"
+   },
+   {
+    "id": 216,
+    "name": "De Bruin Techniek",
+    "source": "recruitee",
+    "token": "de",
+    "active": 1,
+    "confidence": "auto",
+    "discovered_at": "2026-02-21T14:34:17.642922+00:00",
+    "last_verified_at": "2026-02-21T14:34:17.642922+00:00"
    }
   ],
   "scraped_jobs": [
