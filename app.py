@@ -57,6 +57,7 @@ class _FrameHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_FrameHeadersMiddleware)
 
 SEED_FILE = Path("companies_seed.csv")  # committed starter set
+BUNDLE_SEED = Path("data/seed/bundle.json")  # full dataset for Render cold starts
 DB_FILE = get_db_path()
 
 # ---- HTTP helper (timeouts + retries) ----
@@ -82,6 +83,97 @@ DETAIL_CACHE = {}  # (source, token, job_id) -> {"text": str, "time": datetime}
 # In-memory cache for job listings per company
 JOB_CACHE = {}  # (source, token) -> {"jobs": list, "time": datetime}
 JOB_CACHE_TTL = timedelta(minutes=10)
+
+
+# ----------------------------
+# Bundle import (reusable for startup + HTTP endpoint)
+# ----------------------------
+def _import_bundle_data(data: dict) -> dict:
+    """Import bundle data dict into the database. Returns summary."""
+    import time as _time
+    t0 = _time.time()
+    summary: dict = {}
+
+    with sqlite3.connect(DB_FILE) as conn:
+        # -- companies: upsert by UNIQUE(source, token) --
+        rows = data.get("companies", [])
+        for r in rows:
+            conn.execute(
+                """INSERT INTO companies (name, source, token, active, confidence, discovered_at, last_verified_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(source, token) DO UPDATE SET
+                     name=excluded.name, active=excluded.active,
+                     confidence=excluded.confidence, last_verified_at=excluded.last_verified_at""",
+                (r["name"], r["source"], r["token"],
+                 r.get("active", 1), r.get("confidence", "manual"),
+                 r.get("discovered_at"), r.get("last_verified_at")),
+            )
+        summary["companies"] = len(rows)
+
+        # -- scraped_jobs: replace per company_name --
+        rows = data.get("scraped_jobs", [])
+        replaced_companies = set()
+        for r in rows:
+            cn = r["company_name"]
+            if cn not in replaced_companies:
+                conn.execute("DELETE FROM scraped_jobs WHERE company_name = ?", (cn,))
+                replaced_companies.add(cn)
+            conn.execute(
+                """INSERT INTO scraped_jobs (company_name, career_url, title, location_raw, apply_url, scraped_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (cn, r["career_url"], r["title"],
+                 r.get("location_raw", ""), r["apply_url"], r["scraped_at"]),
+            )
+        summary["scraped_jobs"] = len(rows)
+        summary["scraped_companies_replaced"] = len(replaced_companies)
+
+        # -- jobs: upsert by UNIQUE(source, job_key) --
+        rows = data.get("jobs", [])
+        if rows:
+            if _HAS_INTEL:
+                job_intel.ensure_intel_tables(conn)
+            for r in rows:
+                conn.execute(
+                    """INSERT INTO jobs (source, company_name, job_key, title, location_raw,
+                          country, city, url, posted_at, first_seen_at, last_seen_at, is_active, raw_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(source, job_key) DO UPDATE SET
+                         company_name=excluded.company_name, title=excluded.title,
+                         location_raw=excluded.location_raw, country=excluded.country,
+                         city=excluded.city, url=excluded.url, posted_at=excluded.posted_at,
+                         last_seen_at=excluded.last_seen_at, is_active=excluded.is_active,
+                         raw_json=excluded.raw_json""",
+                    (r["source"], r["company_name"], r["job_key"], r["title"],
+                     r.get("location_raw", ""), r.get("country"), r.get("city"),
+                     r.get("url", ""), r.get("posted_at"),
+                     r["first_seen_at"], r["last_seen_at"],
+                     r.get("is_active", 1), r.get("raw_json")),
+                )
+        summary["jobs"] = len(rows)
+
+        # -- company_daily_stats: upsert by UNIQUE(stat_date, company_name, source) --
+        rows = data.get("company_daily_stats", [])
+        if rows:
+            if _HAS_INTEL:
+                job_intel.ensure_intel_tables(conn)
+            for r in rows:
+                conn.execute(
+                    """INSERT INTO company_daily_stats
+                          (stat_date, company_name, source, active_jobs, new_jobs, closed_jobs, net_change)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(stat_date, company_name, source) DO UPDATE SET
+                         active_jobs=excluded.active_jobs, new_jobs=excluded.new_jobs,
+                         closed_jobs=excluded.closed_jobs, net_change=excluded.net_change""",
+                    (r["stat_date"], r["company_name"], r["source"],
+                     r.get("active_jobs", 0), r.get("new_jobs", 0),
+                     r.get("closed_jobs", 0), r.get("net_change", 0)),
+                )
+        summary["company_daily_stats"] = len(rows)
+
+    elapsed_ms = int((_time.time() - t0) * 1000)
+    JOB_CACHE.clear()
+    logger.info("Bundle imported: %s (%dms)", summary, elapsed_ms)
+    return {"summary": summary, "elapsed_ms": elapsed_ms}
 
 
 # ----------------------------
@@ -132,6 +224,17 @@ def init_db():
             logger.info("Seeded %d companies from %s", seeded, SEED_FILE)
         elif count == 0:
             logger.warning("companies.db is empty and no seed CSV found — run discover.py")
+
+    # Auto-import bundle on fresh DB (Render cold starts)
+    with sqlite3.connect(DB_FILE) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+    if count <= 50 and BUNDLE_SEED.exists():
+        try:
+            bundle = json.loads(BUNDLE_SEED.read_text(encoding="utf-8"))
+            result = _import_bundle_data(bundle.get("data", {}))
+            logger.info("Auto-imported seed bundle: %s", result["summary"])
+        except Exception as e:
+            logger.warning("Failed to auto-import seed bundle: %s", e)
 
 
 init_db()
@@ -773,96 +876,13 @@ async def import_bundle(request: Request):
         from fastapi.responses import JSONResponse
         return JSONResponse(err, status_code=code)
 
-    import time as _time
-    t0 = _time.time()
     body = await request.json()
     data = body.get("data", {})
-    summary: dict = {}
-
-    with sqlite3.connect(DB_FILE) as conn:
-        # -- companies: upsert by UNIQUE(source, token) --
-        rows = data.get("companies", [])
-        for r in rows:
-            conn.execute(
-                """INSERT INTO companies (name, source, token, active, confidence, discovered_at, last_verified_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(source, token) DO UPDATE SET
-                     name=excluded.name, active=excluded.active,
-                     confidence=excluded.confidence, last_verified_at=excluded.last_verified_at""",
-                (r["name"], r["source"], r["token"],
-                 r.get("active", 1), r.get("confidence", "manual"),
-                 r.get("discovered_at"), r.get("last_verified_at")),
-            )
-        summary["companies"] = len(rows)
-
-        # -- scraped_jobs: replace per company_name --
-        rows = data.get("scraped_jobs", [])
-        replaced_companies = set()
-        for r in rows:
-            cn = r["company_name"]
-            if cn not in replaced_companies:
-                conn.execute("DELETE FROM scraped_jobs WHERE company_name = ?", (cn,))
-                replaced_companies.add(cn)
-            conn.execute(
-                """INSERT INTO scraped_jobs (company_name, career_url, title, location_raw, apply_url, scraped_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (cn, r["career_url"], r["title"],
-                 r.get("location_raw", ""), r["apply_url"], r["scraped_at"]),
-            )
-        summary["scraped_jobs"] = len(rows)
-        summary["scraped_companies_replaced"] = len(replaced_companies)
-
-        # -- jobs: upsert by UNIQUE(source, job_key) --
-        rows = data.get("jobs", [])
-        if rows:
-            if _HAS_INTEL:
-                job_intel.ensure_intel_tables(conn)
-            for r in rows:
-                conn.execute(
-                    """INSERT INTO jobs (source, company_name, job_key, title, location_raw,
-                          country, city, url, posted_at, first_seen_at, last_seen_at, is_active, raw_json)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(source, job_key) DO UPDATE SET
-                         company_name=excluded.company_name, title=excluded.title,
-                         location_raw=excluded.location_raw, country=excluded.country,
-                         city=excluded.city, url=excluded.url, posted_at=excluded.posted_at,
-                         last_seen_at=excluded.last_seen_at, is_active=excluded.is_active,
-                         raw_json=excluded.raw_json""",
-                    (r["source"], r["company_name"], r["job_key"], r["title"],
-                     r.get("location_raw", ""), r.get("country"), r.get("city"),
-                     r.get("url", ""), r.get("posted_at"),
-                     r["first_seen_at"], r["last_seen_at"],
-                     r.get("is_active", 1), r.get("raw_json")),
-                )
-        summary["jobs"] = len(rows)
-
-        # -- company_daily_stats: upsert by UNIQUE(stat_date, company_name, source) --
-        rows = data.get("company_daily_stats", [])
-        if rows:
-            if _HAS_INTEL:
-                job_intel.ensure_intel_tables(conn)
-            for r in rows:
-                conn.execute(
-                    """INSERT INTO company_daily_stats
-                          (stat_date, company_name, source, active_jobs, new_jobs, closed_jobs, net_change)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(stat_date, company_name, source) DO UPDATE SET
-                         active_jobs=excluded.active_jobs, new_jobs=excluded.new_jobs,
-                         closed_jobs=excluded.closed_jobs, net_change=excluded.net_change""",
-                    (r["stat_date"], r["company_name"], r["source"],
-                     r.get("active_jobs", 0), r.get("new_jobs", 0),
-                     r.get("closed_jobs", 0), r.get("net_change", 0)),
-                )
-        summary["company_daily_stats"] = len(rows)
-
-    elapsed_ms = int((_time.time() - t0) * 1000)
+    result = _import_bundle_data(data)
     _last_import = {
         "imported_at": datetime.now(timezone.utc).isoformat(),
-        "summary": summary,
-        "elapsed_ms": elapsed_ms,
+        **result,
     }
-    JOB_CACHE.clear()
-    logger.info("Bundle imported: %s (%dms)", summary, elapsed_ms)
     return {**_last_import}
 
 

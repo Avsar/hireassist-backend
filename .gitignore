@@ -16,6 +16,9 @@ data/logs/
 data/exports/
 *.log
 
+# Seed bundle is tracked (needed for Render cold starts)
+!data/seed/
+
 # Temp files
 tmp_jobs.json
 cUsersamitaSourceJobsNLprojecttmp_jobs.json

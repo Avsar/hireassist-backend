@@ -4,7 +4,7 @@ export_bundle.py -- Export local DB tables to a JSON bundle for Render import.
 Exports: companies, scraped_jobs, jobs (if exists), company_daily_stats (if exists).
 
 Usage:
-    python export_bundle.py                           # -> data/exports/bundle.json
+    python export_bundle.py                           # -> data/seed/bundle.json
     python export_bundle.py --out my_bundle.json      # custom path
 """
 
@@ -32,7 +32,7 @@ def _export_table(conn: sqlite3.Connection, name: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def export_bundle(out_path: str = "data/exports/bundle.json"):
+def export_bundle(out_path: str = "data/seed/bundle.json"):
     conn = sqlite3.connect(get_db_path())
     bundle: dict = {
         "meta": {
@@ -63,6 +63,6 @@ def export_bundle(out_path: str = "data/exports/bundle.json"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export DB to JSON bundle")
-    parser.add_argument("--out", default="data/exports/bundle.json")
+    parser.add_argument("--out", default="data/seed/bundle.json")
     args = parser.parse_args()
     export_bundle(args.out)
