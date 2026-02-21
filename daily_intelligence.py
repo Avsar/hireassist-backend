@@ -8,6 +8,7 @@ Runs the full pipeline in sequence:
   4. Stats (job_intel.py) -- compute daily stats + momentum
   5. Export (export_bundle.py) -- export DB to JSON bundle
   6. Push to Render -- POST bundle to live site
+  7. Git push -- commit + push bundle.json so Render cold starts get latest data
 
 Usage:
     python daily_intelligence.py                          # full pipeline
@@ -15,6 +16,7 @@ Usage:
     python daily_intelligence.py --skip-scrape            # skip career scraping
     python daily_intelligence.py --stats-only             # only recompute stats
     python daily_intelligence.py --skip-push              # skip Render push
+    python daily_intelligence.py --skip-git               # skip git commit+push
     python daily_intelligence.py --region "Amsterdam"     # pass region to discovery
 """
 
@@ -163,12 +165,61 @@ def push_to_render(bundle_path: str) -> bool:
         return False
 
 
+def git_push_bundle(bundle_path: str) -> bool:
+    """Commit and push the updated bundle.json so Render cold starts get latest data."""
+    print(f"\n{'=' * 60}")
+    print(f"  STEP: Git push bundle")
+    print(f"{'=' * 60}\n")
+
+    try:
+        # Check if there are changes to commit
+        result = subprocess.run(
+            ["git", "diff", "--quiet", "--", bundle_path],
+            cwd=str(PROJECT_DIR), capture_output=True,
+        )
+        if result.returncode == 0:
+            print("  Bundle unchanged -- nothing to push")
+            return True
+
+        # Stage, commit, push
+        today = date.today().isoformat()
+        subprocess.run(
+            ["git", "add", bundle_path],
+            cwd=str(PROJECT_DIR), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", f"Daily bundle update ({today})"],
+            cwd=str(PROJECT_DIR), check=True, capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "push"],
+            cwd=str(PROJECT_DIR), capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            print(f"  [OK] Bundle committed and pushed ({today})")
+            return True
+        else:
+            print(f"  [FAILED] git push: {result.stderr.strip()}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        print("  [FAILED] git push timed out (60s)")
+        return False
+    except subprocess.CalledProcessError as e:
+        print(f"  [FAILED] git error: {e}")
+        return False
+    except Exception as e:
+        print(f"  [FAILED] {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Daily intelligence pipeline")
     parser.add_argument("--skip-discover", action="store_true", help="Skip OSM discovery")
     parser.add_argument("--skip-scrape", action="store_true", help="Skip career page scraping")
     parser.add_argument("--stats-only", action="store_true", help="Only recompute stats")
     parser.add_argument("--skip-push", action="store_true", help="Skip Render push")
+    parser.add_argument("--skip-git", action="store_true", help="Skip git commit+push of bundle")
     parser.add_argument("--region", default="Netherlands", help="Region for discovery (default: Netherlands)")
     args = parser.parse_args()
 
@@ -203,12 +254,19 @@ def main():
     bundle_path = export_bundle()
     results["export"] = bundle_path is not None
 
-    # Step 6: Push to Render
+    # Step 6: Push to Render (immediate update while service is warm)
     if not args.skip_push and bundle_path:
         ok = push_to_render(bundle_path)
         results["push"] = ok
     elif args.skip_push:
         print("\n  Skipping Render push (--skip-push)")
+
+    # Step 7: Git push bundle (ensures Render cold starts get latest data)
+    if not args.skip_git and bundle_path:
+        ok = git_push_bundle(bundle_path)
+        results["git_push"] = ok
+    elif args.skip_git:
+        print("\n  Skipping git push (--skip-git)")
 
     # Final summary
     elapsed = time.time() - start

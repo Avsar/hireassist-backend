@@ -226,9 +226,10 @@ def init_db():
             logger.warning("companies.db is empty and no seed CSV found — run discover.py")
 
     # Auto-import bundle on fresh DB (Render cold starts)
+    # Check scraped_jobs count — if 0, the bundle hasn't been imported yet
     with sqlite3.connect(DB_FILE) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
-    if count <= 50 and BUNDLE_SEED.exists():
+        scraped = conn.execute("SELECT COUNT(*) FROM scraped_jobs").fetchone()[0]
+    if scraped == 0 and BUNDLE_SEED.exists():
         try:
             bundle = json.loads(BUNDLE_SEED.read_text(encoding="utf-8"))
             result = _import_bundle_data(bundle.get("data", {}))
