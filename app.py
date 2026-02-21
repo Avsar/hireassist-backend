@@ -540,6 +540,24 @@ _NL_CITIES = frozenset({
 })
 
 
+def _normalize_city(city: str) -> str | None:
+    """Clean up city name: strip parentheticals, qualifiers, and title-case."""
+    if not city:
+        return None
+    # Remove parenthetical suffixes: (on-site), (hybrid), (p), (NL), etc.
+    city = re.sub(r"\s*\(.*?\)", "", city).strip()
+    # Remove trailing qualifiers
+    city = re.sub(r"\s+(?:HQ|Office|Campus|Area|Region|Center|Centre)$", "", city, flags=re.IGNORECASE).strip()
+    if not city:
+        return None
+    # Match against known NL cities for consistent casing
+    cl = city.lower()
+    for known in _NL_CITIES:
+        if cl == known:
+            return city.title()
+    return city
+
+
 def split_city_country(raw: str):
     raw = (raw or "").strip()
     if not raw:
@@ -561,6 +579,8 @@ def split_city_country(raw: str):
 
     if "remote" in text:
         city = None
+
+    city = _normalize_city(city)
 
     return city, country
 
