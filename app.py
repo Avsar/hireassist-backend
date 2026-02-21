@@ -225,17 +225,16 @@ def init_db():
         elif count == 0:
             logger.warning("companies.db is empty and no seed CSV found — run discover.py")
 
-    # Auto-import bundle on fresh DB (Render cold starts)
-    # Check scraped_jobs count — if 0, the bundle hasn't been imported yet
-    with sqlite3.connect(DB_FILE) as conn:
-        scraped = conn.execute("SELECT COUNT(*) FROM scraped_jobs").fetchone()[0]
-    if scraped == 0 and BUNDLE_SEED.exists():
+    # Auto-import bundle on Render (ephemeral filesystem = always fresh DB)
+    # Render sets RENDER=true automatically; locally we never auto-import
+    is_render = os.environ.get("RENDER", "").lower() in ("true", "1")
+    if is_render and BUNDLE_SEED.exists():
         try:
             bundle = json.loads(BUNDLE_SEED.read_text(encoding="utf-8"))
             result = _import_bundle_data(bundle.get("data", {}))
-            logger.info("Auto-imported seed bundle: %s", result["summary"])
+            logger.info("Render startup: imported bundle -- %s", result["summary"])
         except Exception as e:
-            logger.warning("Failed to auto-import seed bundle: %s", e)
+            logger.warning("Render startup: failed to import bundle -- %s", e)
 
 
 init_db()
