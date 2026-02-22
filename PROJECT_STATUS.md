@@ -22,17 +22,21 @@ A FastAPI web app that aggregates job listings from Dutch tech companies across 
 - Stores career page URLs as fallback for companies without ATS APIs
 - Run: `python detect.py --add`
 
-### 3. `app.py` — FastAPI Web Application (~1080 lines)
+### 3. `app.py` — FastAPI Web Application (~1500 lines)
 - Fetches jobs from all 4 ATS APIs in real-time
 - Reads scraped jobs from `scraped_jobs` table
 - 10-minute in-memory cache
 - Filters: company, keyword, country, city, English-only, new-today
-- Full HTML/CSS UI with sidebar filters
-- Pagination: 100 jobs per page with Prev/Next controls
+- **Redesigned UI (v2):** Inter font, blue gradient hero, search bar, quick filter pills, compact 2-column sidebar, job cards with company initials/meta icons/snippets/Apply+Save buttons
+- **Hero section:** Search bar with keyword + city selector, live stats strip (jobs indexed, companies, new today, cities)
+- **Quick filters:** Horizontal pills (All, English only, New today, city shortcuts) with instant navigation
+- **Sidebar:** Compact 2-column filter grid with auto-submit on dropdowns/checkboxes + live momentum widget (top 5 companies)
+- **Job cards:** Company initials logo, location/type meta with SVG icons, description snippets, "New today" / source pills, Save + Apply buttons
+- Pagination: 100 jobs per page with numbered pagination
 - **Intelligence endpoints:** `/stats/companies`, `/stats/company/{name}`, `/stats/summary`
-- **Momentum page:** `/ui/momentum` — top 20 companies by hiring momentum score
-- **Nav link:** "Company Momentum" link in `/ui` header
-- Endpoints: `/ui` (browser), `/ui/momentum`, `/jobs` (API), `/health`, `/stats/*`, `/`
+- **Momentum page:** `/ui/momentum` — top 20 companies by hiring momentum score (matching v2 design)
+- **Topbar navigation:** Jobs, Companies, Company Momentum, For Employers, Post a Job
+- Endpoints: `/ui` (browser), `/ui/momentum`, `/jobs` (API), `/ping` (keep-alive), `/health`, `/stats/*`, `/`
 - Run: `python -m uvicorn app:app --host 0.0.0.0 --port 8000`
 
 ### 4. `agent_scrape.py` — Playwright Career Page Scraper (~970 lines)
@@ -181,25 +185,92 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ---
 
-## Current Numbers (as of Feb 14, 2026)
+## Current Numbers (as of Feb 22, 2026)
 
 | Metric                          | Value |
 |---------------------------------|-------|
-| Total active companies in DB    | 119   |
-| - careers_page source           | 50    |
-| - smartrecruiters source        | 28    |
-| - greenhouse source             | 27    |
-| - recruitee source              | 11    |
-| - lever source                  | 3     |
-| Scraped jobs in DB              | 440   |
-| Companies with scraped jobs     | 24    |
-| ATS companies (live API jobs)   | ~69   |
-| **Jobs in intel table**         | **323** (2 companies synced so far) |
-| **Intel table sources**         | greenhouse: 272, recruitee: 51 |
+| Total active companies in DB    | 487   |
+| ATS companies                   | 434   |
+| Career page companies           | 53    |
+| Scraped jobs in DB              | 592   |
+| **Jobs in intel table**         | **7,540** |
+| **Company daily stats rows**    | 204   |
 
 ---
 
 ## Session History
+
+### Session 11: Render Cold Start Optimization (Feb 22, 2026)
+
+#### Background Bundle Import (`app.py`)
+- Moved the Render startup bundle import (4.4 MB JSON, ~6k+ rows) from blocking `init_db()` to a background thread
+- App now accepts HTTP requests immediately on cold start; data loads in parallel
+- Added `_bundle_ready` threading.Event so endpoints can report readiness
+
+#### Batch SQL Operations (`app.py`)
+- Converted all row-by-row `conn.execute()` loops in `_import_bundle_data()` to `conn.executemany()` batch operations
+- Applies to: companies, scraped_jobs, jobs, company_daily_stats tables
+- Scraped jobs delete-per-company also batched (collect all company names first, then delete, then bulk insert)
+
+#### Lightweight Keep-Alive Endpoint (`/ping`)
+- Added `GET /ping` -- returns `{"status": "ok", "ready": true/false}` with zero DB or ATS calls
+- Designed for uptime monitors (e.g. UptimeRobot free tier) to ping every ~10 minutes and prevent Render free-tier cold starts
+- `ready` field reflects whether background bundle import has completed
+
+### Session 10: Mobile Responsive + Pipeline Hardening (Feb 22, 2026)
+
+#### Mobile Responsive UI (`app.py`)
+- Added full mobile responsive design at 768px and 400px breakpoints
+- **Hamburger menu:** 3-line SVG button replaces nav links on mobile; opens full-screen overlay with all nav items + Post a Job button
+- **Stacked search bar:** Keyword, city, and search button stack vertically with individual borders on mobile
+- **2-column stats grid:** Stats strip switches from horizontal row to 2x2 grid
+- **Horizontal scroll quick filters:** Filter pills become non-wrapping horizontal scroll strip with hidden scrollbar
+- **Single-column layout:** Sidebar and job list collapse to single column; sidebar hidden by default
+- **Mobile filter toggle:** "Filters & Company Momentum" button toggles sidebar visibility via `.mobile-open` class
+- **Job card adjustments:** Date label moves inline, footer stacks vertically, Apply button stretches full width
+
+#### Google Places Discovery Fallback (`daily_intelligence.py`)
+- Pipeline Step 1 now counts companies before/after OSM discovery run
+- If OSM adds 0 companies (e.g. Overpass API overloaded with 504s), automatically falls back to Google Places discovery
+- Runs: `agent_discover.py --source google --region <region> --limit 200`
+
+#### Pipeline Automation Verified
+- Confirmed Windows Task Scheduler task "HireAssist Daily Pipeline" is active, runs daily at 07:00
+- Ran manual pipeline test -- all 7 steps completed successfully in ~26 minutes:
+  - Discovery: OSM returned 0 (Overpass API overloaded), no Google fallback yet (added after)
+  - Scrape: 51 career pages attempted, 36 returned jobs (592 total scraped)
+  - ATS Sync: 434 companies synced, 22 new companies found via ATS reverse discovery
+  - Stats: 204 company daily stats rows computed
+  - Export: Bundle exported (7,540 jobs)
+  - Push to Render: Successful
+  - Git push: Bundle committed and pushed
+
+#### Data Push
+- Exported and pushed 487 companies + 7,540 jobs to Render production
+- Bundle also committed to GitHub for Render cold start resilience
+
+### Session 9: UI Redesign v2 (Feb 22, 2026)
+
+#### Complete UI Overhaul (`app.py`)
+- Replaced LinkedIn-inspired design with modern Inter font + blue gradient design system
+- **Hero strip:** Blue gradient section with tagline ("Find jobs that nobody else shows you"), integrated search bar (keyword + city + hidden country), live stats strip showing jobs indexed / companies crawled / new today / cities covered
+- **Quick filter pills:** Horizontal pill bar below hero for instant filtering (All, English only, New today, Eindhoven, Amsterdam); aspirational pills (Not on LinkedIn, Remote friendly) shown grayed out
+- **Sidebar redesign:** Compact 2-column grid filter layout (search input full-width, company + city side-by-side, country below, checkboxes inline); auto-submit via `onchange` on all dropdowns and checkboxes -- no need to click Search for filter changes
+- **Momentum widget:** Live top-5 company momentum sidebar with bar charts and delta scores, links to full `/ui/momentum` leaderboard
+- **Job cards redesign:** Company initials logo (2-letter, blue circle), clickable title, meta row with SVG icons (location pin, briefcase), description snippet (2-line clamp), footer with type/source/new-today pills + Save + Apply buttons, time-ago labels from `updated_at`
+- **Topbar navigation:** HireAssist logo + Jobs (active) / Companies / Company Momentum / For Employers / Post a Job
+- **Alert banner:** "Get notified" banner with Set Job Alert button (visual-only, no backend)
+- **Pagination:** Redesigned numbered pagination with arrows
+- **`/ui/momentum` page:** Updated to match v2 design (Inter font, new topbar, new color scheme)
+- **New helpers:** `time_ago()` converts ISO timestamps to "2 hours ago" etc; `company_initials()` extracts 2-letter logo text
+- **Responsive:** Collapses to single column on < 800px viewport
+
+#### Aspirational Features (visual-only, no backend)
+- Save button (no-op), Job Alert banner (no-op), Post a Job link (#), For Employers link (#), Companies link (#)
+- "Not on LinkedIn" and "Remote friendly" filter pills shown grayed out
+
+#### Data Push
+- Exported and pushed 416 companies + 6,285 jobs to Render production
 
 ### Session 5: Job Intelligence Layer (Feb 14, 2026)
 

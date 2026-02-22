@@ -14,6 +14,7 @@ from urllib.parse import urljoin, urlparse
 import re
 import logging
 import sqlite3
+import threading
 from bs4 import BeautifulSoup
 
 # Intelligence layer (optional -- endpoints degrade gracefully if not present)
@@ -60,6 +61,9 @@ SEED_FILE = Path("companies_seed.csv")  # committed starter set
 BUNDLE_SEED = Path("data/seed/bundle.json")  # full dataset for Render cold starts
 DB_FILE = get_db_path()
 
+# Background bundle import readiness flag (set immediately on non-Render envs)
+_bundle_ready = threading.Event()
+
 # ---- HTTP helper (timeouts + retries) ----
 SESSION = requests.Session()
 DEFAULT_HEADERS = {"User-Agent": "HireAssist/0.1 (+local dev)"}
@@ -97,33 +101,29 @@ def _import_bundle_data(data: dict) -> dict:
     with sqlite3.connect(DB_FILE) as conn:
         # -- companies: upsert by UNIQUE(source, token) --
         rows = data.get("companies", [])
-        for r in rows:
-            conn.execute(
-                """INSERT INTO companies (name, source, token, active, confidence, discovered_at, last_verified_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(source, token) DO UPDATE SET
-                     name=excluded.name, active=excluded.active,
-                     confidence=excluded.confidence, last_verified_at=excluded.last_verified_at""",
-                (r["name"], r["source"], r["token"],
-                 r.get("active", 1), r.get("confidence", "manual"),
-                 r.get("discovered_at"), r.get("last_verified_at")),
-            )
+        conn.executemany(
+            """INSERT INTO companies (name, source, token, active, confidence, discovered_at, last_verified_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source, token) DO UPDATE SET
+                 name=excluded.name, active=excluded.active,
+                 confidence=excluded.confidence, last_verified_at=excluded.last_verified_at""",
+            [(r["name"], r["source"], r["token"],
+              r.get("active", 1), r.get("confidence", "manual"),
+              r.get("discovered_at"), r.get("last_verified_at")) for r in rows],
+        )
         summary["companies"] = len(rows)
 
         # -- scraped_jobs: replace per company_name --
         rows = data.get("scraped_jobs", [])
-        replaced_companies = set()
-        for r in rows:
-            cn = r["company_name"]
-            if cn not in replaced_companies:
-                conn.execute("DELETE FROM scraped_jobs WHERE company_name = ?", (cn,))
-                replaced_companies.add(cn)
-            conn.execute(
-                """INSERT INTO scraped_jobs (company_name, career_url, title, location_raw, apply_url, scraped_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (cn, r["career_url"], r["title"],
-                 r.get("location_raw", ""), r["apply_url"], r["scraped_at"]),
-            )
+        replaced_companies = {r["company_name"] for r in rows}
+        for cn in replaced_companies:
+            conn.execute("DELETE FROM scraped_jobs WHERE company_name = ?", (cn,))
+        conn.executemany(
+            """INSERT INTO scraped_jobs (company_name, career_url, title, location_raw, apply_url, scraped_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [(r["company_name"], r["career_url"], r["title"],
+              r.get("location_raw", ""), r["apply_url"], r["scraped_at"]) for r in rows],
+        )
         summary["scraped_jobs"] = len(rows)
         summary["scraped_companies_replaced"] = len(replaced_companies)
 
@@ -132,23 +132,22 @@ def _import_bundle_data(data: dict) -> dict:
         if rows:
             if _HAS_INTEL:
                 job_intel.ensure_intel_tables(conn)
-            for r in rows:
-                conn.execute(
-                    """INSERT INTO jobs (source, company_name, job_key, title, location_raw,
-                          country, city, url, posted_at, first_seen_at, last_seen_at, is_active, raw_json)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(source, job_key) DO UPDATE SET
-                         company_name=excluded.company_name, title=excluded.title,
-                         location_raw=excluded.location_raw, country=excluded.country,
-                         city=excluded.city, url=excluded.url, posted_at=excluded.posted_at,
-                         last_seen_at=excluded.last_seen_at, is_active=excluded.is_active,
-                         raw_json=excluded.raw_json""",
-                    (r["source"], r["company_name"], r["job_key"], r["title"],
-                     r.get("location_raw", ""), r.get("country"), r.get("city"),
-                     r.get("url", ""), r.get("posted_at"),
-                     r["first_seen_at"], r["last_seen_at"],
-                     r.get("is_active", 1), r.get("raw_json")),
-                )
+            conn.executemany(
+                """INSERT INTO jobs (source, company_name, job_key, title, location_raw,
+                      country, city, url, posted_at, first_seen_at, last_seen_at, is_active, raw_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(source, job_key) DO UPDATE SET
+                     company_name=excluded.company_name, title=excluded.title,
+                     location_raw=excluded.location_raw, country=excluded.country,
+                     city=excluded.city, url=excluded.url, posted_at=excluded.posted_at,
+                     last_seen_at=excluded.last_seen_at, is_active=excluded.is_active,
+                     raw_json=excluded.raw_json""",
+                [(r["source"], r["company_name"], r["job_key"], r["title"],
+                  r.get("location_raw", ""), r.get("country"), r.get("city"),
+                  r.get("url", ""), r.get("posted_at"),
+                  r["first_seen_at"], r["last_seen_at"],
+                  r.get("is_active", 1), r.get("raw_json")) for r in rows],
+            )
         summary["jobs"] = len(rows)
 
         # -- company_daily_stats: upsert by UNIQUE(stat_date, company_name, source) --
@@ -156,18 +155,17 @@ def _import_bundle_data(data: dict) -> dict:
         if rows:
             if _HAS_INTEL:
                 job_intel.ensure_intel_tables(conn)
-            for r in rows:
-                conn.execute(
-                    """INSERT INTO company_daily_stats
-                          (stat_date, company_name, source, active_jobs, new_jobs, closed_jobs, net_change)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(stat_date, company_name, source) DO UPDATE SET
-                         active_jobs=excluded.active_jobs, new_jobs=excluded.new_jobs,
-                         closed_jobs=excluded.closed_jobs, net_change=excluded.net_change""",
-                    (r["stat_date"], r["company_name"], r["source"],
-                     r.get("active_jobs", 0), r.get("new_jobs", 0),
-                     r.get("closed_jobs", 0), r.get("net_change", 0)),
-                )
+            conn.executemany(
+                """INSERT INTO company_daily_stats
+                      (stat_date, company_name, source, active_jobs, new_jobs, closed_jobs, net_change)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(stat_date, company_name, source) DO UPDATE SET
+                     active_jobs=excluded.active_jobs, new_jobs=excluded.new_jobs,
+                     closed_jobs=excluded.closed_jobs, net_change=excluded.net_change""",
+                [(r["stat_date"], r["company_name"], r["source"],
+                  r.get("active_jobs", 0), r.get("new_jobs", 0),
+                  r.get("closed_jobs", 0), r.get("net_change", 0)) for r in rows],
+            )
         summary["company_daily_stats"] = len(rows)
 
     elapsed_ms = int((_time.time() - t0) * 1000)
@@ -227,14 +225,21 @@ def init_db():
 
     # Auto-import bundle on Render (ephemeral filesystem = always fresh DB)
     # Render sets RENDER=true automatically; locally we never auto-import
+    # Runs in background thread so the app can start accepting requests immediately
     is_render = os.environ.get("RENDER", "").lower() in ("true", "1")
     if is_render and BUNDLE_SEED.exists():
-        try:
-            bundle = json.loads(BUNDLE_SEED.read_text(encoding="utf-8"))
-            result = _import_bundle_data(bundle.get("data", {}))
-            logger.info("Render startup: imported bundle -- %s", result["summary"])
-        except Exception as e:
-            logger.warning("Render startup: failed to import bundle -- %s", e)
+        def _bg_import():
+            try:
+                bundle = json.loads(BUNDLE_SEED.read_text(encoding="utf-8"))
+                result = _import_bundle_data(bundle.get("data", {}))
+                _bundle_ready.set()
+                logger.info("Render startup: imported bundle -- %s", result["summary"])
+            except Exception as e:
+                _bundle_ready.set()
+                logger.warning("Render startup: failed to import bundle -- %s", e)
+        threading.Thread(target=_bg_import, daemon=True).start()
+    else:
+        _bundle_ready.set()
 
 
 init_db()
@@ -933,6 +938,13 @@ def jobs(
     start = (page - 1) * per_page
     page_jobs = all_jobs[start:start + per_page]
     return {"count": total, "page": page, "per_page": per_page, "pages": (total + per_page - 1) // per_page if total else 0, "jobs": page_jobs}
+
+
+@app.get("/ping")
+def ping():
+    """Lightweight keep-alive endpoint for uptime monitors (e.g. UptimeRobot).
+    Returns instantly -- no DB or ATS calls."""
+    return {"status": "ok", "ready": _bundle_ready.is_set()}
 
 
 @app.get("/health")
