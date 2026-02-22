@@ -231,11 +231,27 @@ def main():
         compute_stats()
         return
 
-    # Step 1: Discovery
+    # Step 1: Discovery (OSM, then Google Places fallback if OSM yields nothing)
     if not args.skip_discover:
+        # Count companies before OSM run
+        with sqlite3.connect(DB_FILE) as _conn:
+            before_count = _conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+
         ok = run_step("Company Discovery (OSM)",
                        [py, "agent_discover.py", "--region", args.region, "--limit", "200"])
         results["discover"] = ok
+
+        # Check if OSM added any new companies
+        with sqlite3.connect(DB_FILE) as _conn:
+            after_count = _conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+        osm_added = after_count - before_count
+
+        if osm_added == 0:
+            print(f"\n  OSM added 0 companies -- falling back to Google Places")
+            ok2 = run_step("Company Discovery (Google Places)",
+                           [py, "agent_discover.py", "--source", "google",
+                            "--region", args.region, "--limit", "200"])
+            results["discover_google"] = ok2
 
     # Step 2: Scrape career pages
     if not args.skip_scrape:
