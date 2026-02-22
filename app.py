@@ -223,11 +223,12 @@ def init_db():
         elif count == 0:
             logger.warning("companies.db is empty and no seed CSV found — run discover.py")
 
-    # Auto-import bundle on Render (ephemeral filesystem = always fresh DB)
-    # Render sets RENDER=true automatically; locally we never auto-import
+    # Auto-import bundle on cloud platforms (ephemeral filesystem = always fresh DB)
+    # Render sets RENDER=true; Railway sets RAILWAY_ENVIRONMENT
     # Runs in background thread so the app can start accepting requests immediately
-    is_render = os.environ.get("RENDER", "").lower() in ("true", "1")
-    if is_render and BUNDLE_SEED.exists():
+    is_cloud = (os.environ.get("RENDER", "").lower() in ("true", "1")
+                or os.environ.get("RAILWAY_ENVIRONMENT", "") != "")
+    if is_cloud and BUNDLE_SEED.exists():
         def _bg_import():
             try:
                 bundle = json.loads(BUNDLE_SEED.read_text(encoding="utf-8"))
@@ -1803,18 +1804,23 @@ document.getElementById('mobileFilterToggle').addEventListener('click', function
 
 
 # ---------------------------------------------------------------------------
-# Self-ping scheduler -- keeps Render warm by hitting its own public URL
+# Self-ping scheduler -- keeps cloud deploys warm by hitting own public URL
 # ---------------------------------------------------------------------------
 def _start_keep_alive():
     """Start a background job that pings the app's public URL every 5 minutes."""
-    render_url = os.environ.get("RENDER_URL", "").rstrip("/")
-    if not render_url:
+    public_url = (os.environ.get("RENDER_URL")
+                  or os.environ.get("RAILWAY_PUBLIC_DOMAIN"))
+    if not public_url:
         return
+    # RAILWAY_PUBLIC_DOMAIN is just the hostname, not a full URL
+    if not public_url.startswith("http"):
+        public_url = f"https://{public_url}"
+    public_url = public_url.rstrip("/")
     from apscheduler.schedulers.background import BackgroundScheduler
 
     def _self_ping():
         try:
-            r = requests.get(f"{render_url}/ping", timeout=10)
+            r = requests.get(f"{public_url}/ping", timeout=10)
             logger.info("Keep-alive ping: %s %s", r.status_code, r.json())
         except Exception as e:
             logger.warning("Keep-alive ping failed: %s", e)
@@ -1822,7 +1828,7 @@ def _start_keep_alive():
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(_self_ping, "interval", minutes=5)
     scheduler.start()
-    logger.info("Keep-alive scheduler started (every 5 min -> %s/ping)", render_url)
+    logger.info("Keep-alive scheduler started (every 5 min -> %s/ping)", public_url)
 
 
 _start_keep_alive()
