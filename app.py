@@ -1002,6 +1002,47 @@ def stats_summary(days: int = Query(default=7, ge=1, le=90)):
     return data
 
 
+# ----------------------------
+# UI helpers
+# ----------------------------
+def time_ago(dt_str: str) -> str:
+    """Convert ISO timestamp to human-readable 'X ago' string."""
+    if not dt_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        diff = datetime.now(timezone.utc) - dt
+        secs = int(diff.total_seconds())
+        if secs < 0:
+            return ""
+        if secs < 3600:
+            m = max(1, secs // 60)
+            return f"{m} min ago"
+        if secs < 86400:
+            h = secs // 3600
+            return f"{h} hour{'s' if h != 1 else ''} ago"
+        days = secs // 86400
+        if days == 1:
+            return "1 day ago"
+        if days < 30:
+            return f"{days} days ago"
+        return f"{days // 30} month{'s' if days // 30 != 1 else ''} ago"
+    except Exception:
+        return ""
+
+
+def company_initials(name: str) -> str:
+    """Get 2-letter initials from company name for logo placeholder."""
+    if not name:
+        return "?"
+    words = name.split()
+    if len(words) >= 2:
+        return (words[0][0] + words[1][0]).upper()
+    return name[:2].upper()
+
+
 @app.get("/ui/momentum", response_class=HTMLResponse)
 def ui_momentum():
     """Company momentum page -- top 20 companies by hiring activity."""
@@ -1030,39 +1071,56 @@ def ui_momentum():
             f"</tr>"
         )
 
+    table_html = (
+        f'<table>'
+        f'<thead><tr><th>#</th><th>Company</th><th>Active Jobs</th><th>New Today</th><th>Net Change</th><th>Momentum</th></tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table>'
+    ) if top20 else '<div class="empty">No stats yet. Run <code>python sync_ats_jobs.py</code> then <code>python daily_intelligence.py --stats-only</code> to populate.</div>'
+
     html = f"""<!DOCTYPE html>
 <html lang="en"><head>
-  <meta charset="utf-8"/><title>Company Momentum - Hire Assist</title>
+  <meta charset="utf-8"/><title>Company Momentum - HireAssist</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f3f2ef; color: #1d2226; margin: 0; }}
-    .header {{ background: #fff; border-bottom: 1px solid #e0e0e0; padding: 0 24px; height: 52px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
-    .header-logo {{ font-size: 20px; font-weight: 700; color: #0A66C2; }}
-    .header a {{ font-size: 14px; color: #0A66C2; text-decoration: none; }}
-    .header a:hover {{ text-decoration: underline; }}
-    .container {{ max-width: 900px; margin: 24px auto; padding: 0 16px; }}
-    h1 {{ font-size: 22px; margin-bottom: 16px; }}
-    table {{ width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
-    th {{ background: #f8f8f8; text-align: left; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #666; text-transform: uppercase; border-bottom: 2px solid #e0e0e0; }}
-    td {{ padding: 10px 14px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }}
-    td a {{ color: #0A66C2; text-decoration: none; }}
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: 'Inter', sans-serif; background: #f9fafb; color: #111827; font-size: 14px; line-height: 1.5; }}
+    a {{ text-decoration: none; }}
+    .topbar {{ background: #fff; border-bottom: 1px solid #e5e7eb; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
+    .logo {{ font-size: 18px; font-weight: 700; color: #1a56db; letter-spacing: -0.4px; }}
+    .logo-tag {{ font-size: 12px; color: #9ca3af; font-weight: 400; margin-left: 6px; }}
+    .nav-right {{ display: flex; align-items: center; gap: 24px; }}
+    .nav-right a {{ color: #4b5563; font-size: 13px; font-weight: 500; transition: color 0.15s; }}
+    .nav-right a:hover {{ color: #1a56db; }}
+    .nav-right a.active {{ color: #1a56db; font-weight: 600; }}
+    .alpha-bar {{ background: #fefce8; border-bottom: 1px solid #fde68a; text-align: center; padding: 9px 32px; font-size: 13px; color: #92400e; }}
+    .container {{ max-width: 900px; margin: 24px auto; padding: 0 32px; }}
+    h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 16px; letter-spacing: -0.3px; }}
+    table {{ width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+    th {{ background: #f9fafb; text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1px solid #e5e7eb; }}
+    td {{ padding: 10px 14px; border-bottom: 1px solid #f3f4f6; font-size: 14px; }}
+    td a {{ color: #1a56db; }}
     td a:hover {{ text-decoration: underline; }}
-    .positive {{ color: #057642; font-weight: 600; }}
+    .positive {{ color: #0e9f6e; font-weight: 600; }}
     .negative {{ color: #c00; font-weight: 600; }}
-    .empty {{ text-align: center; padding: 40px; color: #666; }}
+    .empty {{ text-align: center; padding: 40px; color: #9ca3af; }}
   </style>
 </head><body>
-  <div class="header">
-    <span class="header-logo">Hire Assist</span>
-    <a href="/ui">Jobs</a>
-    <a href="/ui/momentum"><strong>Momentum</strong></a>
+  <div class="topbar">
+    <div style="display:flex;align-items:baseline;gap:6px">
+      <span class="logo">HireAssist</span>
+      <span class="logo-tag">Netherlands tech jobs</span>
+    </div>
+    <div class="nav-right">
+      <a href="/ui">Jobs</a>
+      <a href="#" style="color:#9ca3af;cursor:default">Companies</a>
+      <a href="/ui/momentum" class="active">Company Momentum</a>
+    </div>
   </div>
-  <div style="background:#fff3cd;color:#856404;text-align:center;padding:6px 12px;font-size:13px;border-bottom:1px solid #ffc107">Alpha -- coverage may be incomplete. Please share feedback.</div>
+  <div class="alpha-bar">Alpha -- coverage may be incomplete. Please share feedback.</div>
   <div class="container">
     <h1>Company Momentum (Top 20)</h1>
-    {f'''<table>
-      <thead><tr><th>#</th><th>Company</th><th>Active Jobs</th><th>New Today</th><th>Net Change</th><th>Momentum</th></tr></thead>
-      <tbody>{rows_html}</tbody>
-    </table>''' if top20 else '<div class="empty">No stats yet. Run <code>python sync_ats_jobs.py</code> then <code>python daily_intelligence.py --stats-only</code> to populate.</div>'}
+    {table_html}
   </div>
 </body></html>"""
     return HTMLResponse(html)
@@ -1094,6 +1152,46 @@ def ui(
     start = (page - 1) * PER_PAGE
     visible_jobs = all_visible[start:start + PER_PAGE]
 
+    # Extra stats for the hero strip
+    new_today_count = sum(1 for j in all_visible if j.get("is_new_today"))
+    distinct_cities = len(cities)
+
+    # Momentum top 5 for sidebar widget
+    momentum_html = ""
+    if _HAS_INTEL:
+        try:
+            with sqlite3.connect(DB_FILE) as conn:
+                job_intel.ensure_intel_tables(conn)
+                m_companies = job_intel.get_company_stats(conn)
+            top5 = m_companies[:5]
+            if top5:
+                max_m = top5[0]["momentum"] if top5[0]["momentum"] > 0 else 1
+                m_items = ""
+                for i, mc in enumerate(top5, 1):
+                    bar_w = int(mc["momentum"] / max_m * 100)
+                    delta = f"+{mc['new_jobs']}" if mc["new_jobs"] > 0 else str(mc["new_jobs"])
+                    m_items += (
+                        f'<div class="m-item">'
+                        f'<div class="m-rank">{i}</div>'
+                        f'<div class="m-name">{escape(mc["company_name"])}</div>'
+                        f'<div class="m-bar-wrap"><div class="m-bar" style="width:{bar_w}%"></div></div>'
+                        f'<div class="m-delta">{delta}</div>'
+                        f'</div>'
+                    )
+                momentum_html = (
+                    '<div class="momentum-box">'
+                    '<div class="momentum-header">'
+                    '<div class="momentum-title-text">Company Momentum <span class="momentum-badge">LIVE</span></div>'
+                    '</div>'
+                    '<div class="momentum-sub-text">Most actively hiring this week</div>'
+                    f'{m_items}'
+                    '<div style="margin-top:12px;text-align:center">'
+                    '<a href="/ui/momentum" style="font-size:12px;color:#1a56db;font-weight:500;text-decoration:none">View full leaderboard &#8594;</a>'
+                    '</div></div>'
+                )
+        except Exception:
+            pass
+
     SOURCE_NAMES = {
         "greenhouse": "Greenhouse", "lever": "Lever",
         "smartrecruiters": "SmartRecruiters", "recruitee": "Recruitee",
@@ -1116,41 +1214,62 @@ def ui(
 
         # Placeholder card: careers_page company with 0 scraped jobs
         if j.get("_placeholder"):
-            return (
-                f'<div class="job-card card-browse">'
-                f'<div class="card-header">'
-                f'<span class="card-company-name">{escape(j["company"])}</span>'
+            return ""
+
+        initials = company_initials(j.get("company", ""))
+        is_new = j.get("is_new_today", False)
+        new_class = ' is-new' if is_new else ''
+        ago = time_ago(j.get("updated_at", ""))
+        ago_html = f'<div class="job-date-label">{escape(ago)}</div>' if ago else ''
+
+        # Meta row
+        loc = j.get("location_raw") or ""
+        jtype = j.get("job_type") or ""
+        meta_parts = ""
+        if loc:
+            meta_parts += (
+                f'<div class="meta-pill">'
+                f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>'
+                f'{escape(loc)}'
                 f'</div>'
-                f'<div class="card-location" style="margin-top:4px;color:#999">0 jobs (not scraped yet)</div>'
-                f'<div class="card-footer">'
-                f'<a class="apply-btn" href="{apply_url}" target="_blank">Browse careers page</a>'
-                f'<span class="via-label">careers page</span>'
-                f'</div>'
+            )
+        if jtype:
+            meta_parts += (
+                f'<div class="meta-pill">'
+                f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="7" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>'
+                f'{escape(jtype)}'
                 f'</div>'
             )
 
-        tags = []
-        if j.get("department"):
-            tags.append(f'<span class="tag">{escape(j["department"])}</span>')
-        if j.get("job_type"):
-            tags.append(f'<span class="tag tag-type">{escape(j["job_type"])}</span>')
-        tags_html = f'<div class="card-tags">{"".join(tags)}</div>' if tags else ""
-        snippet_html = f'<p class="card-snippet">{escape(j.get("snippet") or "")}</p>' if j.get("snippet") else ""
-        badge = "<span class='badge-new'>New today</span>" if j.get("is_new_today") else ""
+        snippet = j.get("snippet") or ""
+        snippet_html = f'<div class="job-snippet-text">{escape(snippet)}</div>' if snippet else ''
+
+        # Footer tags
+        tags = ""
+        if jtype:
+            tags += f'<span class="pill pill-type">{escape(jtype)}</span>'
+        if is_new:
+            tags += '<span class="pill pill-new">New today</span>'
         via = SOURCE_NAMES.get(j.get("source", ""), "")
+        if via:
+            tags += f'<span class="pill pill-source">via {escape(via)}</span>'
+
         return (
-            f'<div class="job-card">'
-            f'<div class="card-header">'
-            f'<a class="card-title" href="{apply_url}" target="_blank">{escape(j["title"])}</a>'
-            f'{badge}'
+            f'<div class="job-card{new_class}">'
+            f'{ago_html}'
+            f'<div class="company-row">'
+            f'<div class="co-logo">{escape(initials)}</div>'
+            f'<span class="co-name">{escape(j.get("company", ""))}</span>'
             f'</div>'
-            f'<div class="card-meta">{escape(j["company"])}</div>'
-            f'<div class="card-location">{escape(j.get("location_raw") or "")}</div>'
-            f'{tags_html}'
+            f'<a class="job-title-text" href="{apply_url}" target="_blank">{escape(j["title"])}</a>'
+            f'<div class="job-meta-row">{meta_parts}</div>'
             f'{snippet_html}'
-            f'<div class="card-footer">'
-            f'<a class="apply-btn" href="{apply_url}" target="_blank">Apply</a>'
-            f'<span class="via-label">via {escape(via)}</span>'
+            f'<div class="job-footer-row">'
+            f'<div class="tags-left">{tags}</div>'
+            f'<div class="actions-right">'
+            f'<button class="btn-save" onclick="return false">Save</button>'
+            f'<a class="btn-apply" href="{apply_url}" target="_blank">Apply &#8594;</a>'
+            f'</div>'
             f'</div>'
             f'</div>'
         )
@@ -1173,135 +1292,324 @@ def ui(
     if total_pages > 1:
         parts = []
         if page > 1:
-            parts.append(f'<a class="page-btn" href="{page_url(page - 1)}">&laquo; Prev</a>')
+            parts.append(f'<a class="pg-btn" href="{page_url(page - 1)}">&#8592;</a>')
         for p in range(1, total_pages + 1):
             if p == page:
-                parts.append(f'<span class="page-btn page-current">{p}</span>')
+                parts.append(f'<span class="pg-btn active">{p}</span>')
             elif abs(p - page) <= 2 or p == 1 or p == total_pages:
-                parts.append(f'<a class="page-btn" href="{page_url(p)}">{p}</a>')
+                parts.append(f'<a class="pg-btn" href="{page_url(p)}">{p}</a>')
             elif abs(p - page) == 3:
-                parts.append('<span class="page-dots">...</span>')
+                parts.append('<span class="pg-dots">...</span>')
         if page < total_pages:
-            parts.append(f'<a class="page-btn" href="{page_url(page + 1)}">Next &raquo;</a>')
+            parts.append(f'<a class="pg-btn" href="{page_url(page + 1)}">&#8594;</a>')
         pagination_html = f'<div class="pagination">{"".join(parts)}</div>'
+
+    # Quick filter pill helpers
+    def qf_active(label, is_active):
+        cls = "qf-tag active" if is_active else "qf-tag"
+        return f'<div class="{cls}">{label}</div>'
+
+    no_filters = not q and not company and not english_only and not new_today_only and not city and country == "Netherlands"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Hire Assist – Netherlands Tech Jobs</title>
+  <title>HireAssist - Netherlands Tech Jobs</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f3f2ef; color: #1d2226; font-size: 14px; }}
-    a {{ text-decoration: none; }}
+    :root {{
+      --blue: #1a56db; --blue-light: #e8f0fe; --blue-mid: #3b7de8;
+      --green: #0e9f6e; --green-light: #e8f8f3; --orange: #ff6b35;
+      --text: #111827; --text-mid: #4b5563; --text-light: #9ca3af;
+      --border: #e5e7eb; --bg: #f9fafb; --white: #ffffff; --tag-bg: #f3f4f6;
+      --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    }}
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{ font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }}
+    a {{ text-decoration: none; color: inherit; }}
 
-    .header {{ background: #fff; border-bottom: 1px solid #e0e0e0; padding: 0 24px; height: 52px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
-    .header-logo {{ font-size: 20px; font-weight: 700; color: #0A66C2; letter-spacing: -0.3px; }}
-    .header-sub {{ font-size: 13px; color: #666; }}
+    /* TOPBAR */
+    .topbar {{ background: var(--white); border-bottom: 1px solid var(--border); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
+    .logo-area {{ display: flex; align-items: baseline; gap: 6px; }}
+    .logo {{ font-size: 18px; font-weight: 700; color: var(--blue); letter-spacing: -0.4px; }}
+    .logo-tag {{ font-size: 12px; color: var(--text-light); font-weight: 400; }}
+    .nav-right {{ display: flex; align-items: center; gap: 24px; }}
+    .nav-right a {{ color: var(--text-mid); font-size: 13px; font-weight: 500; transition: color 0.15s; }}
+    .nav-right a:hover {{ color: var(--blue); }}
+    .nav-right a.active {{ color: var(--blue); font-weight: 600; }}
+    .btn-post {{ background: var(--blue); color: white !important; padding: 7px 16px; border-radius: 6px; font-size: 13px !important; font-weight: 600 !important; }}
+    .btn-post:hover {{ background: #1649c0 !important; }}
 
-    .container {{ max-width: 1100px; margin: 0 auto; padding: 24px 16px; display: grid; grid-template-columns: 260px 1fr; gap: 20px; align-items: start; }}
+    /* ALPHA BAR */
+    .alpha-bar {{ background: #fefce8; border-bottom: 1px solid #fde68a; text-align: center; padding: 9px 32px; font-size: 13px; color: #92400e; }}
 
-    .sidebar {{ position: sticky; top: 64px; }}
-    .filter-card {{ background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; }}
-    .filter-card h3 {{ font-size: 15px; font-weight: 600; margin-bottom: 16px; }}
-    .filter-group {{ margin-bottom: 14px; }}
-    .filter-label {{ font-size: 11px; font-weight: 600; color: #777; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; display: block; }}
-    input[type="text"], select {{ width: 100%; padding: 8px 10px; border: 1px solid #c9c9c9; border-radius: 4px; font-size: 14px; color: #1d2226; background: #fff; }}
-    input[type="text"]:focus, select:focus {{ outline: none; border-color: #0A66C2; box-shadow: 0 0 0 2px rgba(10,102,194,.15); }}
-    .chk-label {{ display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; margin-bottom: 10px; }}
-    .chk-label:last-child {{ margin-bottom: 0; }}
-    .search-btn {{ width: 100%; padding: 9px; background: #0A66C2; color: #fff; border: none; border-radius: 20px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 6px; }}
-    .search-btn:hover {{ background: #004182; }}
+    /* HERO STRIP */
+    .hero-strip {{ background: linear-gradient(135deg, #1a56db 0%, #2563eb 50%, #1d4ed8 100%); padding: 40px 32px 36px; color: white; }}
+    .hero-inner {{ max-width: 1100px; margin: 0 auto; }}
+    .hero-strip h1 {{ font-size: 26px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }}
+    .hero-strip p {{ font-size: 14px; opacity: 0.82; margin-bottom: 24px; font-weight: 400; }}
 
-    .main {{ display: flex; flex-direction: column; gap: 8px; }}
-    .results-meta {{ font-size: 13px; color: #666; padding-bottom: 4px; }}
-    .results-meta strong {{ color: #1d2226; }}
+    /* SEARCH BAR */
+    .search-bar {{ background: white; border-radius: 10px; display: flex; align-items: center; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15); max-width: 820px; }}
+    .search-field {{ display: flex; align-items: center; gap: 8px; padding: 13px 16px; flex: 1; border-right: 1px solid var(--border); }}
+    .search-field svg {{ color: #9ca3af; flex-shrink: 0; }}
+    .search-field input {{ border: none; outline: none; font-family: 'Inter', sans-serif; font-size: 14px; color: var(--text); width: 100%; }}
+    .search-field input::placeholder {{ color: var(--text-light); }}
+    .search-select-wrap {{ display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-right: 1px solid var(--border); }}
+    .search-select-wrap svg {{ color: #9ca3af; flex-shrink: 0; }}
+    .search-select-wrap select {{ border: none; outline: none; font-family: 'Inter', sans-serif; font-size: 14px; color: var(--text); background: none; cursor: pointer; min-width: 130px; }}
+    .search-btn {{ background: var(--blue); color: white; border: none; padding: 13px 28px; font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 0.15s; }}
+    .search-btn:hover {{ background: #1649c0; }}
 
-    .job-card {{ background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px 20px; transition: box-shadow .15s; }}
-    .job-card:hover {{ box-shadow: 0 0 0 1px rgba(0,0,0,.1), 0 4px 12px rgba(0,0,0,.08); }}
-    .card-header {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }}
-    .card-title {{ font-size: 16px; font-weight: 600; color: #0A66C2; line-height: 1.3; }}
-    .card-title:hover {{ text-decoration: underline; }}
-    .badge-new {{ flex-shrink: 0; font-size: 11px; font-weight: 600; background: #057642; color: #fff; padding: 2px 8px; border-radius: 12px; margin-top: 2px; }}
-    .card-meta {{ font-size: 14px; color: #434649; margin-top: 4px; font-weight: 500; }}
-    .card-location {{ font-size: 13px; color: #666; margin-top: 2px; }}
-    .card-tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }}
-    .tag {{ font-size: 12px; background: #f3f2ef; color: #434649; border: 1px solid #e0e0e0; border-radius: 4px; padding: 2px 8px; }}
-    .tag-type {{ background: #edf3fb; color: #0A66C2; border-color: #c3d9f5; }}
-    .card-snippet {{ font-size: 13px; color: #555; margin-top: 10px; line-height: 1.55; }}
-    .card-browse {{ background: #f9f9f9; border-style: dashed; }}
-    .card-company-name {{ font-size: 16px; font-weight: 600; color: #1d2226; }}
-    .card-footer {{ display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 12px; border-top: 1px solid #f3f2ef; }}
-    .apply-btn {{ font-size: 14px; font-weight: 600; color: #0A66C2; border: 1.5px solid #0A66C2; border-radius: 20px; padding: 5px 18px; }}
-    .apply-btn:hover {{ background: rgba(10,102,194,.08); }}
-    .via-label {{ font-size: 12px; color: #999; }}
+    /* STATS ROW */
+    .stats-strip {{ background: rgba(255,255,255,0.12); border-radius: 8px; display: inline-flex; gap: 0; margin-top: 20px; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }}
+    .stat-item {{ padding: 10px 20px; border-right: 1px solid rgba(255,255,255,0.15); display: flex; flex-direction: column; gap: 1px; }}
+    .stat-item:last-child {{ border-right: none; }}
+    .stat-num {{ font-size: 18px; font-weight: 700; color: white; letter-spacing: -0.5px; }}
+    .stat-label {{ font-size: 11px; color: rgba(255,255,255,0.65); font-weight: 400; }}
 
-    .pagination {{ display: flex; justify-content: center; align-items: center; gap: 6px; margin-top: 20px; padding: 16px 0; }}
-    .page-btn {{ display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 36px; padding: 0 10px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 14px; font-weight: 500; color: #0A66C2; background: #fff; cursor: pointer; }}
-    .page-btn:hover {{ background: rgba(10,102,194,.08); border-color: #0A66C2; }}
-    .page-current {{ background: #0A66C2; color: #fff; border-color: #0A66C2; cursor: default; }}
-    .page-current:hover {{ background: #0A66C2; }}
-    .page-dots {{ color: #999; padding: 0 4px; }}
+    /* QUICK FILTERS */
+    .quick-filters {{ max-width: 1100px; margin: 0 auto; padding: 14px 32px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+    .qf-label {{ font-size: 12px; color: var(--text-light); font-weight: 500; margin-right: 4px; }}
+    .qf-tag {{ background: white; border: 1px solid var(--border); color: var(--text-mid); padding: 5px 12px; border-radius: 100px; font-size: 12px; cursor: pointer; transition: all 0.15s; font-weight: 500; }}
+    .qf-tag:hover, .qf-tag.active {{ border-color: var(--blue); color: var(--blue); background: var(--blue-light); }}
+
+    /* MAIN LAYOUT */
+    .main {{ max-width: 1100px; margin: 0 auto; padding: 0 32px 60px; display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: start; }}
+
+    /* SIDEBAR */
+    .sidebar {{ display: flex; flex-direction: column; gap: 16px; }}
+    .filter-box {{ background: white; border: 1px solid var(--border); border-radius: 10px; padding: 14px; box-shadow: var(--shadow); }}
+    .filter-box-title {{ font-size: 11px; font-weight: 600; color: var(--text-light); letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 10px; }}
+    .filter-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }}
+    .filter-grid .full {{ grid-column: 1 / -1; }}
+    .filter-select {{ width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; font-family: 'Inter', sans-serif; font-size: 12px; color: var(--text); outline: none; background: white; }}
+    .filter-select:focus {{ border-color: var(--blue); }}
+    .chk-row {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
+    .chk-label {{ display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; color: var(--text); white-space: nowrap; }}
+    .chk-label input {{ accent-color: var(--blue); width: 14px; height: 14px; }}
+    .sidebar-search-btn {{ width: 100%; margin-top: 10px; background: var(--blue); color: white; border: none; padding: 9px; border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; }}
+    .sidebar-search-btn:hover {{ background: #1649c0; }}
+
+    /* MOMENTUM BOX */
+    .momentum-box {{ background: white; border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: var(--shadow); }}
+    .momentum-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }}
+    .momentum-title-text {{ font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }}
+    .momentum-badge {{ background: var(--green); color: white; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.3px; }}
+    .momentum-sub-text {{ font-size: 11px; color: var(--text-light); margin-bottom: 14px; }}
+    .m-item {{ display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }}
+    .m-item:last-child {{ border-bottom: none; }}
+    .m-rank {{ font-size: 11px; font-weight: 600; color: var(--text-light); width: 14px; text-align: center; }}
+    .m-name {{ flex: 1; font-size: 12px; color: var(--text); font-weight: 500; }}
+    .m-bar-wrap {{ width: 50px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }}
+    .m-bar {{ height: 100%; background: var(--blue); border-radius: 2px; }}
+    .m-delta {{ font-size: 11px; color: var(--green); font-weight: 600; min-width: 28px; text-align: right; }}
+
+    /* JOBS AREA */
+    .jobs-area {{ display: flex; flex-direction: column; gap: 12px; }}
+    .jobs-header {{ display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }}
+    .jobs-count {{ font-size: 13px; color: var(--text-mid); }}
+    .jobs-count strong {{ color: var(--text); font-weight: 600; }}
+    .sort-wrap {{ display: flex; align-items: center; gap: 8px; }}
+    .sort-label {{ font-size: 12px; color: var(--text-light); }}
+    .sort-select {{ border: 1px solid var(--border); background: white; color: var(--text); font-family: 'Inter', sans-serif; font-size: 12px; padding: 5px 10px; border-radius: 6px; outline: none; cursor: pointer; }}
+
+    /* ALERT BANNER */
+    .alert-banner {{ background: var(--blue-light); border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
+    .alert-text {{ font-size: 13px; color: #1e40af; display: flex; align-items: center; gap: 8px; }}
+    .btn-alert {{ background: var(--blue); color: white; border: none; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; white-space: nowrap; transition: background 0.15s; flex-shrink: 0; }}
+    .btn-alert:hover {{ background: #1649c0; }}
+
+    /* JOB CARD */
+    .job-card {{ background: white; border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow); cursor: default; transition: border-color 0.15s, box-shadow 0.15s; position: relative; }}
+    .job-card:hover {{ border-color: var(--blue); box-shadow: var(--shadow-md); }}
+    .job-card.is-new {{ border-left: 3px solid var(--green); }}
+    .job-date-label {{ position: absolute; top: 18px; right: 20px; font-size: 11px; color: var(--text-light); }}
+    .company-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }}
+    .co-logo {{ width: 30px; height: 30px; border-radius: 6px; background: var(--blue-light); border: 1px solid #dbeafe; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--blue); flex-shrink: 0; }}
+    .co-name {{ font-size: 13px; color: var(--text-mid); font-weight: 500; }}
+    .job-title-text {{ display: block; font-size: 16px; font-weight: 600; color: var(--blue); letter-spacing: -0.2px; margin-bottom: 8px; line-height: 1.3; }}
+    .job-title-text:hover {{ text-decoration: underline; }}
+    .job-meta-row {{ display: flex; align-items: center; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }}
+    .meta-pill {{ display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-mid); }}
+    .meta-pill svg {{ width: 12px; height: 12px; color: var(--text-light); }}
+    .job-snippet-text {{ font-size: 13px; color: var(--text-mid); line-height: 1.6; margin-bottom: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+    .job-footer-row {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
+    .tags-left {{ display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }}
+    .pill {{ font-size: 11px; padding: 3px 10px; border-radius: 100px; font-weight: 500; border: 1px solid; }}
+    .pill-type {{ background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }}
+    .pill-new {{ background: var(--green-light); color: var(--green); border-color: #a7f3d0; }}
+    .pill-source {{ background: var(--tag-bg); color: var(--text-light); border-color: var(--border); }}
+    .actions-right {{ display: flex; align-items: center; gap: 8px; flex-shrink: 0; }}
+    .btn-save {{ background: white; border: 1px solid var(--border); color: var(--text-mid); padding: 6px 14px; border-radius: 6px; font-size: 12px; font-family: 'Inter', sans-serif; font-weight: 500; cursor: pointer; transition: all 0.15s; }}
+    .btn-save:hover {{ border-color: var(--blue); color: var(--blue); }}
+    .btn-apply {{ display: inline-flex; align-items: center; gap: 4px; background: var(--blue); color: white; border: none; padding: 7px 18px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; transition: background 0.15s; }}
+    .btn-apply:hover {{ background: #1649c0; }}
+
+    /* PAGINATION */
+    .pagination {{ display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 8px; }}
+    .pg-btn {{ min-width: 34px; height: 34px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 13px; cursor: pointer; background: white; border: 1px solid var(--border); color: var(--text-mid); font-family: 'Inter', sans-serif; font-weight: 500; transition: all 0.15s; }}
+    .pg-btn.active {{ background: var(--blue); border-color: var(--blue); color: white; font-weight: 600; cursor: default; }}
+    .pg-btn:hover:not(.active) {{ border-color: var(--blue); color: var(--blue); }}
+    .pg-dots {{ color: var(--text-light); padding: 0 4px; font-size: 13px; }}
 
     @media(max-width: 800px) {{
-      .container {{ grid-template-columns: 1fr; }}
+      .topbar {{ padding: 0 16px; }}
+      .nav-right {{ gap: 12px; }}
+      .hero-strip {{ padding: 24px 16px 20px; }}
+      .hero-strip h1 {{ font-size: 20px; }}
+      .search-bar {{ flex-direction: column; }}
+      .search-field, .search-select-wrap {{ border-right: none; border-bottom: 1px solid var(--border); }}
+      .quick-filters {{ padding: 10px 16px; }}
+      .main {{ grid-template-columns: 1fr; padding: 0 16px 40px; }}
       .sidebar {{ position: static; }}
     }}
   </style>
 </head>
 <body>
-  <div class="header">
-    <span class="header-logo">Hire Assist</span>
-    <span class="header-sub">Netherlands tech jobs</span>
-    <a href="/ui/momentum" style="font-size:13px;color:#0A66C2;text-decoration:none;margin-left:auto">Company Momentum</a>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="logo-area">
+    <div class="logo">HireAssist</div>
+    <div class="logo-tag">Netherlands tech jobs</div>
   </div>
-  <div style="background:#fff3cd;color:#856404;text-align:center;padding:6px 12px;font-size:13px;border-bottom:1px solid #ffc107">Alpha -- coverage may be incomplete. Please share feedback.</div>
-  <div class="container">
-    <aside class="sidebar">
-      <form method="get">
-        <div class="filter-card">
-          <h3>Filters</h3>
-          <div class="filter-group">
-            <label class="filter-label">Search</label>
-            <input type="text" name="q" placeholder="Job title or keyword" value="{escape(q or '')}"/>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">Company</label>
-            <select name="company">
-              <option value="">All companies</option>
-              {company_options}
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">Country</label>
-            <select name="country">
-              <option value="Netherlands" {"selected" if country == "Netherlands" else ""}>Netherlands</option>
-              <option value="" {"selected" if not country else ""}>All countries</option>
-              {country_options}
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">City</label>
-            <select name="city">
-              <option value="">All cities</option>
-              {city_options}
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="chk-label"><input type="checkbox" name="english_only" value="true" {"checked" if english_only else ""}/> English only</label>
-            <label class="chk-label"><input type="checkbox" name="new_today_only" value="true" {"checked" if new_today_only else ""}/> New today only</label>
-          </div>
-          <button type="submit" class="search-btn">Search</button>
+  <div class="nav-right">
+    <a href="/ui" class="active">Jobs</a>
+    <a href="#" style="color:var(--text-light);cursor:default">Companies</a>
+    <a href="/ui/momentum">Company Momentum</a>
+    <a href="#" style="color:var(--text-light);cursor:default">For Employers</a>
+    <a href="#" class="btn-post">Post a Job</a>
+  </div>
+</div>
+
+<!-- ALPHA BAR -->
+<div class="alpha-bar">
+  Alpha -- coverage may be incomplete. Please share feedback.
+</div>
+
+<!-- HERO STRIP -->
+<div class="hero-strip">
+  <div class="hero-inner">
+    <h1>Find jobs that nobody else shows you</h1>
+    <p>We crawl company career pages directly -- not just what's on LinkedIn or Indeed. Discover hidden jobs across the Netherlands.</p>
+
+    <form class="search-bar" method="get" action="/ui">
+      <div class="search-field">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" name="q" placeholder="Job title or keyword..." value="{escape(q or '')}">
+      </div>
+      <div class="search-select-wrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+        <select name="city">
+          <option value="">All cities</option>
+          {city_options}
+        </select>
+      </div>
+      <input type="hidden" name="country" value="{escape(country or 'Netherlands')}">
+      <button type="submit" class="search-btn">Search</button>
+    </form>
+
+    <div class="stats-strip">
+      <div class="stat-item">
+        <div class="stat-num">{total_real:,}</div>
+        <div class="stat-label">Jobs indexed</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num">{len(all_companies):,}</div>
+        <div class="stat-label">Companies crawled</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num" style="color:#6ee7b7">+{new_today_count}</div>
+        <div class="stat-label">New today</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num">{distinct_cities}</div>
+        <div class="stat-label">Cities covered</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- QUICK FILTERS -->
+<div class="quick-filters">
+  <span class="qf-label">Quick filters:</span>
+  <a class="qf-tag {"active" if no_filters else ""}" href="/ui">All</a>
+  <a class="qf-tag {"active" if english_only and not new_today_only else ""}" href="/ui?english_only=true">English only</a>
+  <a class="qf-tag {"active" if new_today_only and not english_only else ""}" href="/ui?new_today_only=true">New today</a>
+  <span class="qf-tag" style="cursor:default;opacity:0.5">Not on LinkedIn</span>
+  <span class="qf-tag" style="cursor:default;opacity:0.5">Remote friendly</span>
+  <a class="qf-tag {"active" if city and city.lower() == "eindhoven" else ""}" href="/ui?city=Eindhoven">Eindhoven</a>
+  <a class="qf-tag {"active" if city and city.lower() == "amsterdam" else ""}" href="/ui?city=Amsterdam">Amsterdam</a>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <form method="get" action="/ui">
+      <div class="filter-box">
+        <div class="filter-box-title">Filters</div>
+        <div class="filter-grid">
+          <input type="text" name="q" class="filter-select full" placeholder="Job title or keyword..." value="{escape(q or '')}">
+
+          <select name="company" class="filter-select" onchange="this.form.submit()">
+            <option value="">All companies</option>
+            {company_options}
+          </select>
+
+          <select name="city" class="filter-select" onchange="this.form.submit()">
+            <option value="">All cities</option>
+            {city_options}
+          </select>
+
+          <select name="country" class="filter-select" onchange="this.form.submit()">
+            <option value="Netherlands" {"selected" if country == "Netherlands" else ""}>Netherlands</option>
+            <option value="" {"selected" if not country else ""}>All countries</option>
+            {country_options}
+          </select>
         </div>
-      </form>
-    </aside>
-    <main class="main">
-      <div class="results-meta">Showing <strong>{total_real}</strong> jobs from {len(all_companies)} companies (page {page}/{total_pages})</div>
-      {cards_html}
-      {pagination_html}
-    </main>
+        <div class="chk-row">
+          <label class="chk-label"><input type="checkbox" name="english_only" value="true" {"checked" if english_only else ""} onchange="this.form.submit()"> English only</label>
+          <label class="chk-label"><input type="checkbox" name="new_today_only" value="true" {"checked" if new_today_only else ""} onchange="this.form.submit()"> New today</label>
+        </div>
+        <button type="submit" class="sidebar-search-btn">Search</button>
+      </div>
+    </form>
+
+    {momentum_html}
   </div>
+
+  <!-- JOBS -->
+  <div class="jobs-area">
+
+    <div class="alert-banner">
+      <div class="alert-text">
+        <span>Get notified when new hidden jobs match your search</span>
+      </div>
+      <button class="btn-alert" onclick="return false">Set Job Alert</button>
+    </div>
+
+    <div class="jobs-header">
+      <div class="jobs-count">Showing <strong>{total_real:,} jobs</strong> from <strong>{len(all_companies)} companies</strong> (page {page}/{total_pages})</div>
+      <div class="sort-wrap">
+        <span class="sort-label">Sort by:</span>
+        <select class="sort-select" disabled>
+          <option>Company name</option>
+        </select>
+      </div>
+    </div>
+
+    {cards_html}
+    {pagination_html}
+
+  </div>
+</div>
+
 </body>
 </html>"""
     return HTMLResponse(html)
