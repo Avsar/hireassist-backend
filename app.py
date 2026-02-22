@@ -1456,16 +1456,169 @@ def ui(
     .pg-btn:hover:not(.active) {{ border-color: var(--blue); color: var(--blue); }}
     .pg-dots {{ color: var(--text-light); padding: 0 4px; font-size: 13px; }}
 
-    @media(max-width: 800px) {{
+    /* MOBILE HAMBURGER */
+    .mobile-menu-btn {{
+      display: none;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      color: var(--text);
+    }}
+    .mobile-nav {{
+      display: none;
+      position: fixed;
+      top: 52px;
+      left: 0; right: 0; bottom: 0;
+      background: white;
+      z-index: 99;
+      padding: 20px;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }}
+    .mobile-nav.open {{ display: flex; }}
+    .mobile-nav a {{
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text);
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }}
+    .mobile-nav a.active {{ color: var(--blue); }}
+    .mobile-nav .btn-post-mobile {{
+      background: var(--blue);
+      color: white;
+      border: none;
+      padding: 14px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      margin-top: 8px;
+      text-align: center;
+    }}
+
+    /* MOBILE FILTER TOGGLE */
+    .mobile-filter-toggle {{
+      display: none;
+      width: 100%;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px 16px;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      cursor: pointer;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }}
+
+    @media (max-width: 768px) {{
       .topbar {{ padding: 0 16px; }}
-      .nav-right {{ gap: 12px; }}
+      .logo-tag {{ display: none; }}
+      .nav-right {{ display: none; }}
+      .mobile-menu-btn {{ display: block; }}
+
+      .alpha-bar {{ font-size: 12px; padding: 8px 16px; }}
+
       .hero-strip {{ padding: 24px 16px 20px; }}
-      .hero-strip h1 {{ font-size: 20px; }}
-      .search-bar {{ flex-direction: column; }}
-      .search-field, .search-select-wrap {{ border-right: none; border-bottom: 1px solid var(--border); }}
-      .quick-filters {{ padding: 10px 16px; }}
-      .main {{ grid-template-columns: 1fr; padding: 0 16px 40px; }}
-      .sidebar {{ position: static; }}
+      .hero-strip h1 {{ font-size: 20px; letter-spacing: -0.3px; margin-bottom: 8px; }}
+      .hero-strip p {{ font-size: 13px; margin-bottom: 16px; }}
+
+      .search-bar {{
+        flex-direction: column;
+        border-radius: 10px;
+        overflow: visible;
+        background: transparent;
+        box-shadow: none;
+        gap: 8px;
+        max-width: 100%;
+      }}
+      .search-field {{
+        background: white;
+        border-radius: 8px;
+        border: 1px solid var(--border) !important;
+        border-right: 1px solid var(--border) !important;
+        width: 100%;
+      }}
+      .search-select-wrap {{
+        background: white;
+        border-radius: 8px;
+        border: 1px solid var(--border) !important;
+        border-right: 1px solid var(--border) !important;
+        width: 100%;
+      }}
+      .search-select-wrap select {{ min-width: unset; width: 100%; }}
+      .search-btn {{
+        border-radius: 8px;
+        width: 100%;
+        padding: 14px;
+        font-size: 15px;
+      }}
+
+      .stats-strip {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        width: 100%;
+        border-radius: 10px;
+        margin-top: 16px;
+      }}
+      .stat-item {{ padding: 10px 14px; }}
+      .stat-num {{ font-size: 16px; }}
+
+      .quick-filters {{
+        padding: 10px 16px;
+        gap: 6px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }}
+      .quick-filters::-webkit-scrollbar {{ display: none; }}
+      .qf-tag {{ font-size: 11px; padding: 4px 10px; white-space: nowrap; flex-shrink: 0; }}
+      .qf-label {{ white-space: nowrap; flex-shrink: 0; }}
+
+      .main {{
+        grid-template-columns: 1fr;
+        padding: 0 16px 40px;
+        gap: 0;
+      }}
+      .sidebar {{ position: static; gap: 0; }}
+      .mobile-filter-toggle {{ display: flex; }}
+      .filter-box, .momentum-box {{ display: none; margin-bottom: 12px; }}
+      .filter-box.mobile-open, .momentum-box.mobile-open {{ display: block; }}
+
+      .alert-banner {{
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+      }}
+      .btn-alert {{ width: 100%; text-align: center; padding: 10px; }}
+
+      .jobs-header {{ flex-direction: column; align-items: flex-start; gap: 8px; }}
+
+      .job-card {{ padding: 14px; }}
+      .job-date-label {{ position: static; display: inline-block; margin-bottom: 6px; font-size: 11px; color: var(--text-light); }}
+      .job-title-text {{ font-size: 15px; }}
+      .job-meta-row {{ gap: 10px; }}
+      .meta-pill {{ font-size: 11px; }}
+
+      .job-footer-row {{ flex-direction: column; align-items: flex-start; gap: 10px; }}
+      .actions-right {{ width: 100%; justify-content: flex-end; }}
+      .btn-apply {{ flex: 1; justify-content: center; }}
+
+      .pagination {{ gap: 3px; }}
+      .pg-btn {{ min-width: 32px; height: 32px; font-size: 12px; }}
+    }}
+    @media (max-width: 400px) {{
+      .hero-strip h1 {{ font-size: 18px; }}
+      .pill {{ font-size: 10px; padding: 2px 8px; }}
     }}
   </style>
 </head>
@@ -1484,6 +1637,17 @@ def ui(
     <a href="#" style="color:var(--text-light);cursor:default">For Employers</a>
     <a href="#" class="btn-post">Post a Job</a>
   </div>
+  <button class="mobile-menu-btn" onclick="document.getElementById('mobileNav').classList.toggle('open')" aria-label="Menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="mobile-nav" id="mobileNav">
+  <a href="/ui" class="active">Jobs</a>
+  <a href="#">Companies</a>
+  <a href="/ui/momentum">Company Momentum</a>
+  <a href="#">For Employers</a>
+  <button class="btn-post-mobile">Post a Job</button>
 </div>
 
 <!-- ALPHA BAR -->
@@ -1551,6 +1715,10 @@ def ui(
 
   <!-- SIDEBAR -->
   <div class="sidebar">
+    <button class="mobile-filter-toggle" id="mobileFilterToggle">
+      <span>Filters &amp; Company Momentum</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
     <form method="get" action="/ui">
       <div class="filter-box">
         <div class="filter-box-title">Filters</div>
@@ -1610,6 +1778,13 @@ def ui(
   </div>
 </div>
 
+<script>
+document.getElementById('mobileFilterToggle').addEventListener('click', function() {{
+  document.querySelectorAll('.filter-box,.momentum-box').forEach(function(el) {{
+    el.classList.toggle('mobile-open');
+  }});
+}});
+</script>
 </body>
 </html>"""
     return HTMLResponse(html)
