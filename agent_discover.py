@@ -906,14 +906,7 @@ def _process_one(
                     f"  x ATS rejected: {best['source']}/{best['token']} "
                     f"({best['jobs']} jobs)  [{vreason}]  -- {cname}"
                 )
-                if not dry_run:
-                    update_candidate(
-                        conn, cid, "rejected",
-                        reject_reason=f"ats_mismatch:{vreason}",
-                        score=score,
-                    )
-                stats["rejected_ats_mismatch"] += 1
-                return "ats_mismatch"
+                # Don't reject yet -- fall through to career page detection below
 
     # ---- Fallback: career page detection with domain verification ----
     logger.debug(f"  Trying career page on {domain}...")
