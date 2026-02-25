@@ -70,11 +70,110 @@ def ensure_intel_tables(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_stats_date
         ON company_daily_stats(stat_date)
     """)
+
+    # Migration: add department + job_type columns (idempotent)
+    for col, col_def in [("department", "TEXT DEFAULT ''"), ("job_type", "TEXT DEFAULT ''")]:
+        try:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_def}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_jobs_department
+        ON jobs(department)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_jobs_city_active
+        ON jobs(city, is_active)
+    """)
     conn.commit()
 
 
 # ---------------------------------------------------------------------------
-# B) Stable dedupe key per source
+# B) Title-based department inference (fallback when ATS has no department)
+# ---------------------------------------------------------------------------
+
+# Each tuple: (department_label, [keywords that match in lowercase title])
+_DEPT_RULES = [
+    ("Engineering",     ["software engineer", "backend engineer", "frontend engineer",
+                         "full stack engineer", "fullstack engineer", "devops engineer",
+                         "site reliability", "sre ", "platform engineer",
+                         "cloud engineer", "infrastructure engineer",
+                         "embedded engineer", "firmware engineer",
+                         "qa engineer", "test engineer", "quality engineer",
+                         "mobile engineer", "ios engineer", "android engineer",
+                         "machine learning engineer", "ml engineer",
+                         "software developer", "web developer",
+                         "backend developer", "frontend developer",
+                         "full stack developer", "fullstack developer",
+                         "java developer", "python developer", ".net developer",
+                         "c++ developer", "rust developer", "golang developer",
+                         "react developer", "angular developer", "vue developer",
+                         "mobile developer", "ios developer", "android developer",
+                         "developer", "entwickler", "ontwikkelaar"]),
+    ("Data",            ["data scientist", "data engineer", "data analyst",
+                         "data architect", "analytics engineer",
+                         "machine learning", "ml ", " ai ", "artificial intelligence",
+                         "business intelligence", " bi ", "data platform"]),
+    ("Design",          ["ux design", "ui design", "product design",
+                         "graphic design", "visual design", "interaction design",
+                         "ux researcher", "ux writer", "creative director"]),
+    ("Product",         ["product manager", "product owner", "product lead",
+                         "product director", "product analyst", "scrum master",
+                         "agile coach"]),
+    ("HR",              ["human resource", "people operations", "people partner",
+                         "people manager", "talent acqui", "recruiter",
+                         "recruiting", "recruitment", "hr manager",
+                         "hr business partner", "hrbp", "people & culture",
+                         "employer brand", "compensation", "payroll"]),
+    ("Marketing",       ["marketing manager", "marketing director",
+                         "content market", "digital market", "growth market",
+                         "seo ", "sem ", "social media", "brand manager",
+                         "communications manager", "pr manager",
+                         "community manager", "marketing specialist",
+                         "marketing coordinator", "copywriter"]),
+    ("Sales",           ["sales manager", "sales director", "sales represent",
+                         "account executive", "account manager",
+                         "business development", "sales engineer",
+                         "sales consultant", "inside sales", "field sales",
+                         "revenue ", "commercial manager"]),
+    ("Finance",         ["financial analyst", "finance manager", "accountant",
+                         "controller", "financial controller", "cfo ",
+                         "treasury", "tax ", "audit", "bookkeeper",
+                         "finance director", "fp&a"]),
+    ("Legal",           ["legal counsel", "lawyer", "attorney", "jurist",
+                         "compliance officer", "compliance manager",
+                         "regulatory", "legal advisor", "paralegal",
+                         "privacy officer", "dpo "]),
+    ("Operations",      ["operations manager", "operations director",
+                         "supply chain", "logistics", "procurement",
+                         "facility", "warehouse", "inventory",
+                         "office manager", "chief operating"]),
+    ("Customer Support", ["customer support", "customer service",
+                          "customer success", "helpdesk", "help desk",
+                          "support engineer", "support specialist",
+                          "technical support", "service desk"]),
+    ("IT",              ["system admin", "sysadmin", "it manager",
+                         "it support", "network engineer", "security engineer",
+                         "cybersecurity", "information security",
+                         "it director", "ciso", "it specialist"]),
+]
+
+
+def infer_department(title: str) -> str:
+    """Infer department from job title keywords. Returns '' if no match."""
+    if not title:
+        return ""
+    t = title.lower()
+    for dept, keywords in _DEPT_RULES:
+        for kw in keywords:
+            if kw in t:
+                return dept
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# C) Stable dedupe key per source
 # ---------------------------------------------------------------------------
 
 def make_job_key(source: str, job_dict: dict) -> str:
@@ -133,6 +232,10 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
         city = jd.get("city") or None
         url = jd.get("apply_url") or jd.get("url") or ""
         posted_at = jd.get("updated_at") or jd.get("posted_at") or None
+        department = jd.get("department") or ""
+        if not department:
+            department = infer_department(title)
+        job_type = jd.get("job_type") or ""
 
         existing = conn.execute(
             "SELECT id, is_active FROM jobs WHERE source=? AND job_key=?",
@@ -143,10 +246,12 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
             conn.execute(
                 """UPDATE jobs SET
                     title=?, location_raw=?, country=?, city=?, url=?,
+                    department=?, job_type=?,
                     posted_at=COALESCE(?, posted_at),
                     last_seen_at=?, is_active=1
                 WHERE source=? AND job_key=?""",
                 (title, location_raw, country, city, url,
+                 department, job_type,
                  posted_at, now, source, job_key),
             )
             stats["updated"] += 1
@@ -154,10 +259,12 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
             conn.execute(
                 """INSERT INTO jobs
                     (source, company_name, job_key, title, location_raw, country, city,
-                     url, posted_at, first_seen_at, last_seen_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                     url, department, job_type,
+                     posted_at, first_seen_at, last_seen_at, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (source, company_name, job_key, title, location_raw, country, city,
-                 url, posted_at, now, now),
+                 url, department, job_type,
+                 posted_at, now, now),
             )
             stats["new"] += 1
 

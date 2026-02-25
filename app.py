@@ -466,7 +466,7 @@ def scrape_career_page(url: str, company_name: str) -> list[dict]:
 # Source: Greenhouse
 # ----------------------------
 def gh_list_jobs(board_token: str):
-    url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs"
+    url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true"
     data = http_get_json(url, timeout=45, retries=1)
     return data.get("jobs", [])
 
@@ -714,7 +714,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "token": token,
                 "id": j.get("id") or j.get("slug", ""),
                 "title": title,
-                "department": j.get("category", "") or "",
+                "department": j.get("department", "") or j.get("category", "") or "",
                 "job_type": emp_type,
                 "snippet": make_snippet(j.get("description", "") or ""),
                 "location_raw": loc_raw,
@@ -1635,6 +1635,262 @@ def ui(
       .hero-strip h1 {{ font-size: 18px; }}
       .pill {{ font-size: 10px; padding: 2px 8px; }}
     }}
+
+    /* ===== CHAT WIDGET ===== */
+    .chat-widget {{
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      font-family: 'Inter', sans-serif;
+    }}
+    .chat-bubble {{
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--blue);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 16px rgba(26, 86, 219, 0.4);
+      transition: transform 0.2s, box-shadow 0.2s;
+      position: relative;
+      color: white;
+    }}
+    .chat-bubble:hover {{
+      transform: scale(1.08);
+      box-shadow: 0 6px 24px rgba(26, 86, 219, 0.5);
+    }}
+    .chat-bubble-close {{ display: none; }}
+    .chat-bubble.open .chat-bubble-icon {{ display: none; }}
+    .chat-bubble.open .chat-bubble-close {{ display: block; }}
+    .chat-bubble::before {{
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      background: var(--blue);
+      opacity: 0;
+      animation: chatPulse 3s ease-in-out infinite;
+      z-index: -1;
+    }}
+    @keyframes chatPulse {{
+      0%, 100% {{ opacity: 0; transform: scale(1); }}
+      50% {{ opacity: 0.2; transform: scale(1.25); }}
+    }}
+    .chat-bubble.opened-once::before {{
+      animation: none;
+      opacity: 0;
+    }}
+    .chat-panel {{
+      position: absolute;
+      bottom: 68px;
+      right: 0;
+      width: 380px;
+      max-height: 520px;
+      background: var(--white);
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(16px) scale(0.95);
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }}
+    .chat-panel.open {{
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }}
+    .chat-panel-header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--blue);
+      color: white;
+    }}
+    .chat-panel-title {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }}
+    .chat-panel-close-btn {{
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.8);
+      cursor: pointer;
+      padding: 2px;
+      display: flex;
+      border-radius: 4px;
+      transition: background 0.15s;
+    }}
+    .chat-panel-close-btn:hover {{
+      background: rgba(255,255,255,0.15);
+      color: white;
+    }}
+    .chat-messages {{
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 200px;
+      max-height: 340px;
+    }}
+    .chat-msg {{
+      max-width: 88%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      animation: chatMsgIn 0.25s ease;
+    }}
+    @keyframes chatMsgIn {{
+      from {{ opacity: 0; transform: translateY(6px); }}
+      to {{ opacity: 1; transform: translateY(0); }}
+    }}
+    .chat-msg.bot {{
+      background: var(--bg);
+      color: var(--text);
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }}
+    .chat-msg.user {{
+      background: var(--blue);
+      color: white;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }}
+    .chat-typing {{
+      display: flex;
+      gap: 4px;
+      align-self: flex-start;
+      padding: 12px 16px;
+      background: var(--bg);
+      border-radius: 12px;
+      border-bottom-left-radius: 4px;
+    }}
+    .chat-typing span {{
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-light);
+      animation: chatDot 1.2s ease-in-out infinite;
+    }}
+    .chat-typing span:nth-child(2) {{ animation-delay: 0.2s; }}
+    .chat-typing span:nth-child(3) {{ animation-delay: 0.4s; }}
+    @keyframes chatDot {{
+      0%, 60%, 100% {{ opacity: 0.3; transform: translateY(0); }}
+      30% {{ opacity: 1; transform: translateY(-4px); }}
+    }}
+    .chat-input {{
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--white);
+      min-height: 20px;
+    }}
+    .chat-chips {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .chat-chip {{
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 14px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }}
+    .chat-chip:hover {{
+      border-color: var(--blue);
+      color: var(--blue);
+      background: var(--blue-light);
+    }}
+    .chat-chip.selected {{
+      background: var(--blue);
+      color: white;
+      border-color: var(--blue);
+    }}
+    .chat-chip-confirm {{
+      background: var(--blue);
+      color: white;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 4px;
+    }}
+    .chat-chip-confirm:hover {{
+      background: #1649c0;
+    }}
+    .chat-text-input {{
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      outline: none;
+      margin-top: 6px;
+    }}
+    .chat-text-input:focus {{
+      border-color: var(--blue);
+    }}
+    .chat-start-over {{
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-light);
+      cursor: pointer;
+      transition: color 0.15s;
+    }}
+    .chat-start-over:hover {{
+      color: var(--blue);
+    }}
+    @media (max-width: 768px) {{
+      .chat-widget {{
+        bottom: 16px;
+        right: 16px;
+      }}
+      .chat-bubble {{
+        width: 50px;
+        height: 50px;
+      }}
+      .chat-panel {{
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-height: 85vh;
+        border-radius: 16px 16px 0 0;
+      }}
+      .chat-messages {{
+        max-height: calc(85vh - 140px);
+      }}
+    }}
   </style>
 </head>
 <body>
@@ -1792,6 +2048,309 @@ def ui(
 
   </div>
 </div>
+
+<!-- CHAT WIDGET -->
+<div id="chatWidget" class="chat-widget">
+  <button id="chatBubble" class="chat-bubble" aria-label="Job search assistant">
+    <svg class="chat-bubble-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+    <svg class="chat-bubble-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+  </button>
+  <div id="chatPanel" class="chat-panel">
+    <div class="chat-panel-header">
+      <div class="chat-panel-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Job Search Assistant
+      </div>
+      <button id="chatPanelClose" class="chat-panel-close-btn" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div id="chatMessages" class="chat-messages"></div>
+    <div id="chatInput" class="chat-input"></div>
+  </div>
+</div>
+
+<script>
+(function() {{
+  var bubble = document.getElementById('chatBubble');
+  var panel = document.getElementById('chatPanel');
+  var panelClose = document.getElementById('chatPanelClose');
+  var messagesEl = document.getElementById('chatMessages');
+  var inputEl = document.getElementById('chatInput');
+
+  var answers = {{ role: '', city: '', tech: [], englishOnly: false }};
+  var currentStep = 0;
+  var isOpen = false;
+
+  var steps = [
+    {{
+      question: "Hi! I can help you find the right job. What kind of role are you looking for?",
+      type: 'single',
+      chips: [
+        {{ label: 'Software Engineer', value: 'Software Engineer' }},
+        {{ label: 'Data / AI', value: 'Data' }},
+        {{ label: 'DevOps / Cloud', value: 'DevOps' }},
+        {{ label: 'Design / UX', value: 'Design' }},
+        {{ label: 'Product / PM', value: 'Product' }},
+        {{ label: 'Other...', value: '__other__' }}
+      ],
+      onAnswer: function(val) {{ answers.role = val; }}
+    }},
+    {{
+      question: "Great choice! Where would you like to work?",
+      type: 'single',
+      chips: [
+        {{ label: 'Eindhoven', value: 'Eindhoven' }},
+        {{ label: 'Amsterdam', value: 'Amsterdam' }},
+        {{ label: 'Rotterdam', value: 'Rotterdam' }},
+        {{ label: 'Utrecht', value: 'Utrecht' }},
+        {{ label: 'Remote', value: '' }},
+        {{ label: 'Anywhere in NL', value: '' }}
+      ],
+      onAnswer: function(val) {{ answers.city = val; }}
+    }},
+    {{
+      question: "Any preferred tech stack? Pick as many as you like.",
+      type: 'multi',
+      chips: [
+        {{ label: 'Python', value: 'Python' }},
+        {{ label: 'Java', value: 'Java' }},
+        {{ label: 'JavaScript / React', value: 'React' }},
+        {{ label: '.NET / C#', value: 'C#' }},
+        {{ label: 'Go / Rust', value: 'Go' }},
+        {{ label: "Don't care", value: '' }}
+      ],
+      onAnswer: function(val) {{
+        answers.tech = val.filter(function(v) {{ return v !== ''; }});
+      }}
+    }},
+    {{
+      question: "One more thing -- English-only postings?",
+      type: 'single',
+      chips: [
+        {{ label: 'Yes please', value: 'yes' }},
+        {{ label: 'Show all', value: 'no' }}
+      ],
+      onAnswer: function(val) {{ answers.englishOnly = (val === 'yes'); }}
+    }}
+  ];
+
+  function togglePanel() {{
+    isOpen = !isOpen;
+    panel.classList.toggle('open', isOpen);
+    bubble.classList.toggle('open', isOpen);
+    if (isOpen) {{
+      bubble.classList.add('opened-once');
+      if (currentStep === 0 && messagesEl.children.length === 0) {{
+        startConversation();
+      }}
+    }}
+    if (window.innerWidth <= 768) {{
+      document.body.style.overflow = isOpen ? 'hidden' : '';
+    }}
+  }}
+
+  bubble.addEventListener('click', togglePanel);
+  panelClose.addEventListener('click', togglePanel);
+
+  function addMessage(text, sender) {{
+    var div = document.createElement('div');
+    div.className = 'chat-msg ' + sender;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }}
+
+  function showTyping() {{
+    var div = document.createElement('div');
+    div.className = 'chat-typing';
+    div.id = 'chatTypingIndicator';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }}
+
+  function hideTyping() {{
+    var el = document.getElementById('chatTypingIndicator');
+    if (el) el.remove();
+  }}
+
+  function clearInput() {{
+    inputEl.innerHTML = '';
+  }}
+
+  function renderChips(step) {{
+    clearInput();
+    var wrapper = document.createElement('div');
+    wrapper.className = 'chat-chips';
+
+    if (step.type === 'single') {{
+      step.chips.forEach(function(chip) {{
+        var btn = document.createElement('button');
+        btn.className = 'chat-chip';
+        btn.textContent = chip.label;
+        btn.addEventListener('click', function() {{
+          if (chip.value === '__other__') {{
+            showOtherInput(step);
+            return;
+          }}
+          addMessage(chip.label, 'user');
+          step.onAnswer(chip.value);
+          clearInput();
+          advanceStep();
+        }});
+        wrapper.appendChild(btn);
+      }});
+    }}
+
+    if (step.type === 'multi') {{
+      var selected = [];
+      step.chips.forEach(function(chip) {{
+        var btn = document.createElement('button');
+        btn.className = 'chat-chip';
+        btn.textContent = chip.label;
+        btn.addEventListener('click', function() {{
+          if (chip.value === '') {{
+            addMessage(chip.label, 'user');
+            step.onAnswer([]);
+            clearInput();
+            advanceStep();
+            return;
+          }}
+          var idx = selected.indexOf(chip.value);
+          if (idx > -1) {{
+            selected.splice(idx, 1);
+            btn.classList.remove('selected');
+          }} else {{
+            selected.push(chip.value);
+            btn.classList.add('selected');
+          }}
+          var existing = inputEl.querySelector('.chat-chip-confirm');
+          if (selected.length > 0 && !existing) {{
+            var confirm = document.createElement('button');
+            confirm.className = 'chat-chip-confirm';
+            confirm.textContent = 'Continue';
+            confirm.addEventListener('click', function() {{
+              addMessage(selected.join(', '), 'user');
+              step.onAnswer(selected.slice());
+              clearInput();
+              advanceStep();
+            }});
+            inputEl.appendChild(confirm);
+          }} else if (selected.length === 0 && existing) {{
+            existing.remove();
+          }}
+        }});
+        wrapper.appendChild(btn);
+      }});
+    }}
+
+    inputEl.insertBefore(wrapper, inputEl.firstChild);
+  }}
+
+  function showOtherInput(step) {{
+    clearInput();
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'chat-text-input';
+    input.placeholder = 'Type the role you are looking for...';
+    input.addEventListener('keydown', function(e) {{
+      if (e.key === 'Enter' && input.value.trim()) {{
+        var val = input.value.trim();
+        addMessage(val, 'user');
+        step.onAnswer(val);
+        clearInput();
+        advanceStep();
+      }}
+    }});
+    inputEl.appendChild(input);
+
+    var submitBtn = document.createElement('button');
+    submitBtn.className = 'chat-chip-confirm';
+    submitBtn.textContent = 'Continue';
+    submitBtn.addEventListener('click', function() {{
+      if (input.value.trim()) {{
+        var val = input.value.trim();
+        addMessage(val, 'user');
+        step.onAnswer(val);
+        clearInput();
+        advanceStep();
+      }}
+    }});
+    inputEl.appendChild(submitBtn);
+    input.focus();
+  }}
+
+  function advanceStep() {{
+    currentStep++;
+    if (currentStep >= steps.length) {{
+      showTyping();
+      setTimeout(function() {{
+        hideTyping();
+        showResults();
+      }}, 800);
+    }} else {{
+      showTyping();
+      setTimeout(function() {{
+        hideTyping();
+        addMessage(steps[currentStep].question, 'bot');
+        renderChips(steps[currentStep]);
+      }}, 600);
+    }}
+  }}
+
+  function showResults() {{
+    var params = [];
+    if (answers.role) {{
+      params.push('q=' + encodeURIComponent(answers.role));
+    }}
+    if (answers.city) {{
+      params.push('city=' + encodeURIComponent(answers.city));
+    }}
+    params.push('country=Netherlands');
+    if (answers.englishOnly) {{
+      params.push('english_only=true');
+    }}
+    var url = '/ui' + (params.length > 0 ? '?' + params.join('&') : '');
+
+    addMessage("Here are your personalized results. Taking you there now!", 'bot');
+    clearInput();
+
+    var startOver = document.createElement('span');
+    startOver.className = 'chat-start-over';
+    startOver.textContent = 'Start over';
+    startOver.addEventListener('click', resetChat);
+    inputEl.appendChild(startOver);
+
+    setTimeout(function() {{
+      window.location.href = url;
+    }}, 1200);
+  }}
+
+  function startConversation() {{
+    currentStep = 0;
+    answers = {{ role: '', city: '', tech: [], englishOnly: false }};
+    messagesEl.innerHTML = '';
+    clearInput();
+    showTyping();
+    setTimeout(function() {{
+      hideTyping();
+      addMessage(steps[0].question, 'bot');
+      renderChips(steps[0]);
+    }}, 500);
+  }}
+
+  function resetChat() {{
+    startConversation();
+  }}
+}})();
+</script>
 
 <script>
 document.getElementById('mobileFilterToggle').addEventListener('click', function() {{
