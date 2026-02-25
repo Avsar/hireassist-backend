@@ -59,6 +59,12 @@ class _FrameHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(_FrameHeadersMiddleware)
 
+# Serve static files (logos, etc.)
+from fastapi.staticfiles import StaticFiles
+_static_dir = Path(__file__).parent / "static"
+if _static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
 SEED_FILE = Path("companies_seed.csv")  # committed starter set
 BUNDLE_SEED = Path("data/seed/bundle.json")  # full dataset for Render cold starts
 DB_FILE = get_db_path()
@@ -1271,14 +1277,16 @@ def ui_momentum():
     html = f"""<!DOCTYPE html>
 <html lang="en"><head>
   <meta charset="utf-8"/><title>Company Momentum - HireAssist</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sora:wght@600;800&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{ font-family: 'Inter', sans-serif; background: #f9fafb; color: #111827; font-size: 14px; line-height: 1.5; }}
     a {{ text-decoration: none; }}
     .topbar {{ background: #fff; border-bottom: 1px solid #e5e7eb; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
     .logo {{ font-size: 18px; font-weight: 700; color: #1a56db; letter-spacing: -0.4px; }}
-    .logo-tag {{ font-size: 12px; color: #9ca3af; font-weight: 400; margin-left: 6px; }}
+    .logo-by {{ font-size: 13px; color: #6b7280; font-weight: 500; margin-left: 10px; display: inline-flex; align-items: center; gap: 5px; }}
+    .logo-by svg {{ vertical-align: middle; }}
+    .cubea-text {{ font-family: 'Sora', sans-serif; font-weight: 600; letter-spacing: -0.3px; }}
     .nav-right {{ display: flex; align-items: center; gap: 24px; }}
     .nav-right a {{ color: #4b5563; font-size: 13px; font-weight: 500; transition: color 0.15s; }}
     .nav-right a:hover {{ color: #1a56db; }}
@@ -1299,7 +1307,7 @@ def ui_momentum():
   <div class="topbar">
     <div style="display:flex;align-items:baseline;gap:6px">
       <span class="logo">HireAssist</span>
-      <span class="logo-tag">Netherlands tech jobs</span>
+      <span class="logo-by">by <svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></span>
     </div>
     <div class="nav-right">
       <a href="/ui">Jobs</a>
@@ -1576,8 +1584,8 @@ def ui(
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>HireAssist - Netherlands Tech Jobs</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <title>HireAssist - Jobs in NL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sora:wght@600;800&display=swap" rel="stylesheet">
   <style>
     :root {{
       --blue: #1a56db; --blue-light: #e8f0fe; --blue-mid: #3b7de8;
@@ -1593,9 +1601,11 @@ def ui(
 
     /* TOPBAR */
     .topbar {{ background: var(--white); border-bottom: 1px solid var(--border); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
-    .logo-area {{ display: flex; align-items: baseline; gap: 6px; }}
+    .logo-area {{ display: flex; align-items: center; gap: 6px; }}
     .logo {{ font-size: 18px; font-weight: 700; color: var(--blue); letter-spacing: -0.4px; }}
-    .logo-tag {{ font-size: 12px; color: var(--text-light); font-weight: 400; }}
+    .logo-by {{ font-size: 13px; color: var(--text-light); font-weight: 500; margin-left: 10px; display: inline-flex; align-items: center; gap: 5px; }}
+    .logo-by svg {{ vertical-align: middle; }}
+    .cubea-text {{ font-family: 'Sora', sans-serif; font-weight: 600; letter-spacing: -0.3px; }}
     .nav-right {{ display: flex; align-items: center; gap: 24px; }}
     .nav-right a {{ color: var(--text-mid); font-size: 13px; font-weight: 500; transition: color 0.15s; }}
     .nav-right a:hover {{ color: var(--blue); }}
@@ -1781,7 +1791,7 @@ def ui(
 
     @media (max-width: 768px) {{
       .topbar {{ padding: 0 16px; }}
-      .logo-tag {{ display: none; }}
+      .logo-by {{ font-size: 0; }} .logo-by svg {{ display: none; }}
       .nav-right {{ display: none; }}
       .mobile-menu-btn {{ display: block; }}
 
@@ -2161,7 +2171,7 @@ def ui(
 <div class="topbar">
   <div class="logo-area">
     <div class="logo">HireAssist</div>
-    <div class="logo-tag">Netherlands tech jobs</div>
+    <div class="logo-by">by <svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></div>
   </div>
   <div class="nav-right">
     <a href="/ui" class="active">Jobs</a>
