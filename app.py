@@ -559,6 +559,16 @@ def is_new_today(updated_at: str):
         return False
 
 
+def is_stale(first_seen: str, days: int = 60) -> bool:
+    if not first_seen:
+        return False
+    try:
+        dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) - dt > timedelta(days=days)
+    except Exception:
+        return False
+
+
 _NL_CITIES = frozenset({
     "amsterdam", "rotterdam", "utrecht", "eindhoven", "den haag", "the hague",
     "groningen", "tilburg", "almere", "breda", "nijmegen", "enschede",
@@ -993,6 +1003,7 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
             "apply_url": r["url"] or "",
             "updated_at": r["posted_at"] or r["first_seen_at"] or "",
             "is_new_today": is_new_today(r["first_seen_at"] or ""),
+            "is_stale": is_stale(r["first_seen_at"] or ""),
             "snippet": "",
         })
 
@@ -1313,12 +1324,15 @@ def ui(
     city: str | None = Query(default=None),
     english_only: bool = Query(default=False),
     new_today_only: bool = Query(default=False),
+    hide_stale: bool = Query(default=False),
     lang: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
 ):
     PER_PAGE = 100
     all_companies = load_companies()
     all_jobs = aggregate_jobs(company, q, None, None, english_only, new_today_only, lang=lang)
+    if hide_stale:
+        all_jobs = [j for j in all_jobs if not j.get("is_stale")]
     countries = unique([j.get("country") for j in all_jobs if j.get("country")])
     country_jobs = [j for j in all_jobs if soft_country_match(j, country)] if country else all_jobs
     cities = unique([j.get("city") for j in country_jobs if j.get("city")])
@@ -1472,6 +1486,8 @@ def ui(
             tags += f'<span class="pill pill-type">{escape(jtype)}</span>'
         if is_new:
             tags += '<span class="pill pill-new">New today</span>'
+        if j.get("is_stale"):
+            tags += '<span class="pill pill-stale">60+ days</span>'
         via = SOURCE_NAMES.get(j.get("source", ""), "")
         if via:
             tags += f'<span class="pill pill-source">via {escape(via)}</span>'
@@ -1507,6 +1523,7 @@ def ui(
         if city: params.append(f"city={escape(city)}")
         if english_only: params.append("english_only=true")
         if new_today_only: params.append("new_today_only=true")
+        if hide_stale: params.append("hide_stale=true")
         if lang: params.append(f"lang={escape(lang)}")
         params.append(f"page={p}")
         return "/ui?" + "&amp;".join(params)
@@ -1532,7 +1549,7 @@ def ui(
         cls = "qf-tag active" if is_active else "qf-tag"
         return f'<div class="{cls}">{label}</div>'
 
-    no_filters = not q and not company and not english_only and not new_today_only and not city and country == "Netherlands"
+    no_filters = not q and not company and not english_only and not new_today_only and not hide_stale and not city and country == "Netherlands"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1665,6 +1682,7 @@ def ui(
     .pill {{ font-size: 11px; padding: 3px 10px; border-radius: 100px; font-weight: 500; border: 1px solid; }}
     .pill-type {{ background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }}
     .pill-new {{ background: var(--green-light); color: var(--green); border-color: #a7f3d0; }}
+    .pill-stale {{ background: #fef3c7; color: #92400e; border-color: #fde68a; }}
     .pill-source {{ background: var(--tag-bg); color: var(--text-light); border-color: var(--border); }}
     .actions-right {{ display: flex; align-items: center; gap: 8px; flex-shrink: 0; }}
     .btn-save {{ background: white; border: 1px solid var(--border); color: var(--text-mid); padding: 6px 14px; border-radius: 6px; font-size: 12px; font-family: 'Inter', sans-serif; font-weight: 500; cursor: pointer; transition: all 0.15s; }}
@@ -2239,6 +2257,7 @@ def ui(
         <div class="chk-row">
           <label class="chk-label"><input type="checkbox" name="english_only" value="true" {"checked" if english_only else ""} onchange="this.form.submit()"> English only</label>
           <label class="chk-label"><input type="checkbox" name="new_today_only" value="true" {"checked" if new_today_only else ""} onchange="this.form.submit()"> New today</label>
+          <label class="chk-label"><input type="checkbox" name="hide_stale" value="true" {"checked" if hide_stale else ""} onchange="this.form.submit()"> Hide stale (60+ days)</label>
         </div>
         <button type="submit" class="sidebar-search-btn">Search</button>
       </div>
