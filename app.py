@@ -1326,6 +1326,7 @@ def ui(
     new_today_only: bool = Query(default=False),
     hide_stale: bool = Query(default=False),
     lang: str | None = Query(default=None),
+    sort: str = Query(default="newest"),
     page: int = Query(default=1, ge=1),
 ):
     PER_PAGE = 100
@@ -1353,6 +1354,12 @@ def ui(
         all_visible = [j for j in country_jobs
                        if not j.get("_placeholder")
                        and (not _city_filter or (j.get("city") or "").lower() == _city_filter.lower())]
+    # Sort
+    if sort == "newest":
+        all_visible.sort(key=lambda j: j.get("updated_at") or "", reverse=True)
+    elif sort == "company":
+        all_visible.sort(key=lambda j: (j.get("company", ""), j.get("title", "")))
+
     total_real = sum(1 for j in all_visible if not j.get("_placeholder"))
     total_visible = len(all_visible)
     total_pages = (total_visible + PER_PAGE - 1) // PER_PAGE if total_visible else 1
@@ -1514,6 +1521,18 @@ def ui(
 
     cards_html = "".join(render_card(j) for j in visible_jobs)
 
+    # Base params for sort dropdown (excludes sort and page)
+    _base = []
+    if company: _base.append(f"company={escape(company)}")
+    if q: _base.append(f"q={escape(q)}")
+    if country: _base.append(f"country={escape(country)}")
+    if city: _base.append(f"city={escape(city)}")
+    if english_only: _base.append("english_only=true")
+    if new_today_only: _base.append("new_today_only=true")
+    if hide_stale: _base.append("hide_stale=true")
+    if lang: _base.append(f"lang={escape(lang)}")
+    sort_base_params = "&amp;".join(_base) if _base else "country=Netherlands"
+
     # Build pagination controls
     def page_url(p):
         params = []
@@ -1525,6 +1544,7 @@ def ui(
         if new_today_only: params.append("new_today_only=true")
         if hide_stale: params.append("hide_stale=true")
         if lang: params.append(f"lang={escape(lang)}")
+        if sort != "newest": params.append(f"sort={escape(sort)}")
         params.append(f"page={p}")
         return "/ui?" + "&amp;".join(params)
 
@@ -2280,8 +2300,9 @@ def ui(
       <div class="jobs-count">Showing <strong>{total_real:,} jobs</strong> from <strong>{filtered_company_count} companies</strong> (page {page}/{total_pages})</div>
       <div class="sort-wrap">
         <span class="sort-label">Sort by:</span>
-        <select class="sort-select" disabled>
-          <option>Company name</option>
+        <select class="sort-select" onchange="window.location=this.value">
+          <option value="/ui?{sort_base_params}&amp;sort=newest" {"selected" if sort == "newest" else ""}>Newest first</option>
+          <option value="/ui?{sort_base_params}&amp;sort=company" {"selected" if sort == "company" else ""}>Company name</option>
         </select>
       </div>
     </div>
