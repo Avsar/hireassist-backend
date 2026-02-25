@@ -527,6 +527,34 @@ def is_english(text: str) -> bool:
     return sum(w in t for w in dutch_markers) < 2
 
 
+_DUTCH_TITLE_WORDS = [
+    "medewerker", "stagiair", "stage", "assistent", "adviseur",
+    "monteur", "chauffeur", "verkoper", "boekhouder", "beheerder",
+    "leidinggevende", "directeur", "hoofd ", "verzorgende",
+    "verpleegkundige", "docent", "leraar", "begeleider",
+    "schoonmaker", "magazijnmedewerker", "receptioniste",
+    "administratief", "bijrijder", "heftruckchauffeur",
+    "werkvoorbereider", "constructeur", "tekenaar", "planner",
+    "calculator", "uitvoerder", "voorman", "timmerman",
+    "schilder", "elektricien", "loodgieter", "installateur",
+    "automonteur", "fietsenmaker", "kok ", "souschef",
+    "afdelingshoofd", "teamleider", "coördinator",
+    "vrijwilliger", "ervaringsdeskundige", "pedagogisch",
+    "allround", "vacature", "solliciteer",
+]
+
+
+def title_looks_dutch(title: str) -> bool:
+    """Quick check if a job title is likely Dutch."""
+    t = (title or "").lower()
+    return any(w in t for w in _DUTCH_TITLE_WORDS)
+
+
+def title_looks_english(title: str) -> bool:
+    """Quick check if a job title is likely English."""
+    return not title_looks_dutch(title)
+
+
 def is_new_today(updated_at: str):
     if not updated_at:
         return False
@@ -777,7 +805,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
 # ----------------------------
 # Aggregate jobs + filters
 # ----------------------------
-def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, limit=0):
+def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0):
     companies = load_companies()
     if company:
         companies = [c for c in companies if c["name"].lower() == company.lower()]
@@ -811,30 +839,12 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
     if city:
         all_jobs = [j for j in all_jobs if (j.get("city") or "").lower() == city.lower()]
 
-    # English-only: strict for Greenhouse, allow others (MVP)
-    if english_only:
-        filtered = []
-        for j in all_jobs:
-            if j["source"] != "greenhouse":
-                filtered.append(j)
-                continue
-
-            try:
-                key = ("greenhouse", j["token"], int(j["id"]))
-                now = datetime.now(timezone.utc)
-                cached = DETAIL_CACHE.get(key)
-                if cached and now - cached["time"] < timedelta(hours=6):
-                    text = cached["text"]
-                else:
-                    detail = gh_job_detail(j["token"], int(j["id"]))
-                    text = html_to_text(detail.get("content", ""))
-                    DETAIL_CACHE[key] = {"text": text, "time": now}
-
-                if is_english(text):
-                    filtered.append(j)
-            except Exception:
-                continue
-        all_jobs = filtered
+    # Language filter: title-based for all sources
+    effective_lang = lang or ("en" if english_only else None)
+    if effective_lang == "en":
+        all_jobs = [j for j in all_jobs if title_looks_english(j.get("title", ""))]
+    elif effective_lang == "nl":
+        all_jobs = [j for j in all_jobs if title_looks_dutch(j.get("title", ""))]
 
     all_jobs.sort(key=lambda x: (x.get("company", ""), x.get("title", "")))
     return all_jobs[:limit] if limit else all_jobs
@@ -1148,11 +1158,12 @@ def ui(
     city: str | None = Query(default=None),
     english_only: bool = Query(default=False),
     new_today_only: bool = Query(default=False),
+    lang: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
 ):
     PER_PAGE = 100
     all_companies = load_companies()
-    all_jobs = aggregate_jobs(company, q, None, None, english_only, new_today_only)
+    all_jobs = aggregate_jobs(company, q, None, None, english_only, new_today_only, lang=lang)
     countries = unique([j.get("country") for j in all_jobs if j.get("country")])
     country_jobs = [j for j in all_jobs if soft_country_match(j, country)] if country else all_jobs
     cities = unique([j.get("city") for j in country_jobs if j.get("city")])
@@ -1300,6 +1311,7 @@ def ui(
         if city: params.append(f"city={escape(city)}")
         if english_only: params.append("english_only=true")
         if new_today_only: params.append("new_today_only=true")
+        if lang: params.append(f"lang={escape(lang)}")
         params.append(f"page={p}")
         return "/ui?" + "&amp;".join(params)
 
@@ -1645,32 +1657,45 @@ def ui(
       font-family: 'Inter', sans-serif;
     }}
     .chat-bubble {{
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
+      height: 44px;
+      padding: 0 18px;
+      border-radius: 100px;
       background: var(--blue);
       border: none;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
+      gap: 8px;
       box-shadow: 0 4px 16px rgba(26, 86, 219, 0.4);
       transition: transform 0.2s, box-shadow 0.2s;
       position: relative;
       color: white;
     }}
     .chat-bubble:hover {{
-      transform: scale(1.08);
+      transform: scale(1.05);
       box-shadow: 0 6px 24px rgba(26, 86, 219, 0.5);
+    }}
+    .chat-bubble-label {{
+      font-size: 13px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      white-space: nowrap;
     }}
     .chat-bubble-close {{ display: none; }}
     .chat-bubble.open .chat-bubble-icon {{ display: none; }}
+    .chat-bubble.open .chat-bubble-label {{ display: none; }}
     .chat-bubble.open .chat-bubble-close {{ display: block; }}
+    .chat-bubble.open {{
+      width: 44px;
+      padding: 0;
+      border-radius: 50%;
+    }}
     .chat-bubble::before {{
       content: '';
       position: absolute;
       inset: -4px;
-      border-radius: 50%;
+      border-radius: 100px;
       background: var(--blue);
       opacity: 0;
       animation: chatPulse 3s ease-in-out infinite;
@@ -1875,8 +1900,11 @@ def ui(
         right: 16px;
       }}
       .chat-bubble {{
-        width: 50px;
-        height: 50px;
+        height: 40px;
+        padding: 0 14px;
+      }}
+      .chat-bubble-label {{
+        font-size: 12px;
       }}
       .chat-panel {{
         position: fixed;
@@ -2052,9 +2080,10 @@ def ui(
 <!-- CHAT WIDGET -->
 <div id="chatWidget" class="chat-widget">
   <button id="chatBubble" class="chat-bubble" aria-label="Job search assistant">
-    <svg class="chat-bubble-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    <svg class="chat-bubble-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
     </svg>
+    <span class="chat-bubble-label">Find jobs</span>
     <svg class="chat-bubble-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
     </svg>
@@ -2062,8 +2091,8 @@ def ui(
   <div id="chatPanel" class="chat-panel">
     <div class="chat-panel-header">
       <div class="chat-panel-title">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Job Search Assistant
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Find Your Next Job
       </div>
       <button id="chatPanelClose" class="chat-panel-close-btn" aria-label="Close">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2084,7 +2113,7 @@ def ui(
   var messagesEl = document.getElementById('chatMessages');
   var inputEl = document.getElementById('chatInput');
 
-  var answers = {{ role: '', city: '', tech: [], englishOnly: false }};
+  var answers = {{ role: '', city: '', tech: [], lang: '' }};
   var currentStep = 0;
   var isOpen = false;
 
@@ -2131,13 +2160,14 @@ def ui(
       }}
     }},
     {{
-      question: "One more thing -- English-only postings?",
+      question: "Last one -- what language should the job postings be in?",
       type: 'single',
       chips: [
-        {{ label: 'Yes please', value: 'yes' }},
-        {{ label: 'Show all', value: 'no' }}
+        {{ label: 'English', value: 'en' }},
+        {{ label: 'Dutch', value: 'nl' }},
+        {{ label: 'Show all', value: '' }}
       ],
-      onAnswer: function(val) {{ answers.englishOnly = (val === 'yes'); }}
+      onAnswer: function(val) {{ answers.lang = val; }}
     }}
   ];
 
@@ -2287,8 +2317,14 @@ def ui(
     input.focus();
   }}
 
+  var techRoles = ['Software Engineer', 'Data', 'DevOps'];
+
   function advanceStep() {{
     currentStep++;
+    // Skip tech stack step (index 2) for non-technical roles
+    if (currentStep === 2 && techRoles.indexOf(answers.role) === -1) {{
+      currentStep++;
+    }}
     if (currentStep >= steps.length) {{
       showTyping();
       setTimeout(function() {{
@@ -2314,8 +2350,8 @@ def ui(
       params.push('city=' + encodeURIComponent(answers.city));
     }}
     params.push('country=Netherlands');
-    if (answers.englishOnly) {{
-      params.push('english_only=true');
+    if (answers.lang) {{
+      params.push('lang=' + encodeURIComponent(answers.lang));
     }}
     var url = '/ui' + (params.length > 0 ? '?' + params.join('&') : '');
 
