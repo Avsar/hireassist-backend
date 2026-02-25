@@ -1168,7 +1168,8 @@ def ui(
 
     # Extra stats for the hero strip
     new_today_count = sum(1 for j in all_visible if j.get("is_new_today"))
-    distinct_cities = len(cities)
+    filtered_company_count = len(set(j.get("company") for j in all_visible if j.get("company")))
+    distinct_cities = len(set(j.get("city") for j in all_visible if j.get("city")))
 
     # Momentum top 5 for sidebar widget
     momentum_html = ""
@@ -1697,7 +1698,7 @@ def ui(
         <div class="stat-label">Jobs indexed</div>
       </div>
       <div class="stat-item">
-        <div class="stat-num">{len(all_companies):,}</div>
+        <div class="stat-num">{filtered_company_count:,}</div>
         <div class="stat-label">Companies crawled</div>
       </div>
       <div class="stat-item">
@@ -1777,7 +1778,7 @@ def ui(
     </div>
 
     <div class="jobs-header">
-      <div class="jobs-count">Showing <strong>{total_real:,} jobs</strong> from <strong>{len(all_companies)} companies</strong> (page {page}/{total_pages})</div>
+      <div class="jobs-count">Showing <strong>{total_real:,} jobs</strong> from <strong>{filtered_company_count} companies</strong> (page {page}/{total_pages})</div>
       <div class="sort-wrap">
         <span class="sort-label">Sort by:</span>
         <select class="sort-select" disabled>

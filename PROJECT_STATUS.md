@@ -185,20 +185,65 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ---
 
-## Current Numbers (as of Feb 22, 2026)
+## Current Numbers (as of Feb 23, 2026)
 
 | Metric                          | Value |
 |---------------------------------|-------|
-| Total active companies in DB    | 487   |
-| ATS companies                   | 434   |
-| Career page companies           | 53    |
-| Scraped jobs in DB              | 592   |
-| **Jobs in intel table**         | **7,540** |
-| **Company daily stats rows**    | 204   |
+| Total active companies in DB    | 593   |
+| ATS companies                   | ~530  |
+| Career page companies           | 55    |
+| Scraped jobs in DB              | 600   |
+| **Jobs in intel table**         | **7,622** |
+| **Company daily stats rows**    | ~400+ |
 
 ---
 
 ## Session History
+
+### Session 12: Railway Migration + Career Page Fallback Fix (Feb 23, 2026)
+
+#### Render Cold Start Optimization (`app.py`)
+- **Background bundle import:** Moved the 4.4 MB bundle import from blocking `init_db()` to a background thread -- app accepts requests immediately on cold start
+- **Batch SQL:** Converted all row-by-row `execute()` to `executemany()` in `_import_bundle_data()`
+- **`/ping` endpoint:** Lightweight keep-alive returning `{"status": "ok", "ready": true/false}`
+- **APScheduler self-ping:** Hits own public URL every 5 minutes to prevent cold starts; reads `RENDER_URL` or `RAILWAY_PUBLIC_DOMAIN`
+- **`logging.basicConfig`:** Added so `logger.info` actually outputs to stdout (was silently dropped before)
+
+#### Railway Migration
+- **`railway.toml`:** Created with `uvicorn app:app --host 0.0.0.0 --port $PORT`, healthcheck on `/ping`
+- **Cloud detection:** `init_db()` now checks both `RENDER=true` and `RAILWAY_ENVIRONMENT` for auto-importing bundles
+- **`.env` updated:** `RENDER_URL` now points to `https://hireassist-backend-production.up.railway.app`
+- **`ADMIN_TOKEN`** set as Railway service variable
+- **cubea.nl site:** Updated `HireAssistAlpha.tsx` to use `/ping` instead of `/health` for status check; URL configured via `NEXT_PUBLIC_HIREASSIST_UI_URL` env var on Vercel/Netlify
+
+#### Career Page Fallback Fix (Bug Fix in `agent_discover.py`)
+- **The bug:** When ATS verification failed, `return "ats_mismatch"` on line 916 exited before reaching the career page fallback code (lines 918-940) that was already written
+- **The fix:** Removed the early return so ATS rejection falls through to career page detection
+- **Impact:** Companies without a supported ATS now get checked for career pages instead of being silently discarded
+
+#### Discovery Runs
+- **Google Places Eindhoven** (50 candidates) -- 36 new companies added
+- **Re-processed 20 ATS-rejected Eindhoven candidates** -- 14 added (12 ATS, 2 career page); ABO-Milieuconsult and A. Leering Enschede recovered via career page fallback
+- **Manual research additions:** Air Liquide (Workday, 19 jobs), Beckhoff Automation (2 jobs), Techwave Consulting (Workday, 2 jobs), Frencken (0 jobs currently)
+- 59 Eindhoven ATS-rejected candidates remain to be re-processed
+
+#### Key Commits
+| Hash | Description |
+|------|-------------|
+| 9cda709 | Background bundle import, batch SQL, /ping endpoint |
+| 6b21636 | APScheduler self-ping |
+| ba41586 | railway.toml |
+| bb3c094 | Cloud platform detection (Railway + Render) |
+| 23a43fc | logging.basicConfig |
+| d7f1cc1 | Career page fallback fix |
+
+#### Stats Comparison
+| Metric | Start of Session | End of Session |
+|--------|-----------------|----------------|
+| Companies | 487 | 593 |
+| Jobs | ~6,285 | 7,622 |
+| Scraped jobs | 592 | 600 |
+| Career page companies | 51 | 55 |
 
 ### Session 11: Render Cold Start Optimization (Feb 22, 2026)
 
@@ -456,16 +501,7 @@ DuckDuckGo search is no longer used anywhere in the codebase.
    - Other: Axelera AI, Demcon, Itility, Temper, VDL ETG, VDL Groep
    - **DONE (Session 4):** ~~Vanderlande (Workday)~~, ~~Marel Poultry (Workday)~~, ~~Nexperia (Workday)~~
 
-3. **Git init + .gitignore** -- Project is not version-controlled. Should add:
-   ```
-   .env
-   __pycache__/
-   companies.db
-   *.pyc
-   tmp_jobs.json
-   nul
-   data/logs/
-   ```
+3. ~~**Git init + .gitignore**~~ -- **DONE.** Project is version-controlled on GitHub.
 
 ### Medium Priority
 4. **Add `requirements.txt`** -- Dependencies are currently only in docker-compose. Should have:
@@ -477,11 +513,18 @@ DuckDuckGo search is no longer used anywhere in the codebase.
    playwright
    python-dotenv
    anthropic        # optional, only for --use-ai-cleanup
+   apscheduler      # for self-ping keep-alive
    ```
 
-5. **Schedule daily intelligence pipeline** -- Set up Windows Task Scheduler to run `python daily_intelligence.py` daily. This handles discovery + scrape + ATS sync + stats in one command.
+5. ~~**Schedule daily intelligence pipeline**~~ -- **DONE (Session 8).** Windows Task Scheduler runs daily at 07:00.
 
-6. **Run full ATS sync** -- Run `python sync_ats_jobs.py` to populate the `jobs` table with all 69 ATS companies (only 2 synced so far). Then `python daily_intelligence.py --stats-only` to compute stats.
+6. ~~**Run full ATS sync**~~ -- **DONE.** All ATS companies synced via daily pipeline.
+
+6b. **Set `NEXT_PUBLIC_HIREASSIST_UI_URL`** on cubea.nl hosting platform (Vercel/Netlify) to `https://hireassist-backend-production.up.railway.app/ui`
+
+6c. **Re-process remaining 59 Eindhoven ATS-rejected candidates** -- These were rejected before the career page fallback fix; many may now qualify.
+
+6d. **Process 334 pending OSM candidates nationwide** -- Discovery candidates awaiting processing.
 
 7. **Improve job deduplication in /ui** -- Some companies appear via both ATS API and career page scraping, potentially showing duplicate jobs in the UI. The `jobs` table already deduplicates, but `/ui` still reads from live ATS + `scraped_jobs`.
 

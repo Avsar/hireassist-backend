@@ -44,7 +44,7 @@ def sync_all(company_filter: str | None = None, dry_run: bool = False):
         totals["attempted"] += 1
         name, source, token = c["name"], c["source"], c["token"]
         label = f"  {name:<35} ({source})"
-        print(label, end=" ", flush=True)
+        print(label.encode("ascii", "replace").decode("ascii"), end=" ", flush=True)
 
         try:
             job_dicts = normalize_jobs(name, source, token)
