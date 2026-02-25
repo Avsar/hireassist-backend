@@ -1307,7 +1307,7 @@ def ui_momentum():
   <div class="topbar">
     <div style="display:flex;align-items:baseline;gap:6px">
       <span class="logo">HireAssist</span>
-      <span class="logo-by">by <svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></span>
+      <span class="logo-by">by <a href="https://cubea.nl/" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none"><svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></a></span>
     </div>
     <div class="nav-right">
       <a href="/ui">Jobs</a>
@@ -2171,7 +2171,7 @@ def ui(
 <div class="topbar">
   <div class="logo-area">
     <div class="logo">HireAssist</div>
-    <div class="logo-by">by <svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></div>
+    <div class="logo-by">by <a href="https://cubea.nl/" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none"><svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></a></div>
   </div>
   <div class="nav-right">
     <a href="/ui" class="active">Jobs</a>
