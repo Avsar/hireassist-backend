@@ -1283,21 +1283,21 @@ def ui_momentum():
     body {{ font-family: 'Inter', sans-serif; background: #f9fafb; color: #111827; font-size: 14px; line-height: 1.5; }}
     a {{ text-decoration: none; }}
     .topbar {{ background: #fff; border-bottom: 1px solid #e5e7eb; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
-    .logo {{ font-size: 18px; font-weight: 700; color: #1a56db; letter-spacing: -0.4px; }}
+    .logo {{ font-size: 18px; font-weight: 700; color: #0d9488; letter-spacing: -0.4px; }}
     .logo-by {{ font-size: 13px; color: #6b7280; font-weight: 500; margin-left: 10px; display: inline-flex; align-items: center; gap: 5px; }}
     .logo-by svg {{ vertical-align: middle; }}
     .cubea-text {{ font-family: 'Sora', sans-serif; font-weight: 600; letter-spacing: -0.3px; }}
     .nav-right {{ display: flex; align-items: center; gap: 24px; }}
     .nav-right a {{ color: #4b5563; font-size: 13px; font-weight: 500; transition: color 0.15s; }}
-    .nav-right a:hover {{ color: #1a56db; }}
-    .nav-right a.active {{ color: #1a56db; font-weight: 600; }}
+    .nav-right a:hover {{ color: #0d9488; }}
+    .nav-right a.active {{ color: #0d9488; font-weight: 600; }}
     .alpha-bar {{ background: #fefce8; border-bottom: 1px solid #fde68a; text-align: center; padding: 9px 32px; font-size: 13px; color: #92400e; }}
     .container {{ max-width: 900px; margin: 24px auto; padding: 0 32px; }}
     h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 16px; letter-spacing: -0.3px; }}
     table {{ width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
     th {{ background: #f9fafb; text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1px solid #e5e7eb; }}
     td {{ padding: 10px 14px; border-bottom: 1px solid #f3f4f6; font-size: 14px; }}
-    td a {{ color: #1a56db; }}
+    td a {{ color: #0d9488; }}
     td a:hover {{ text-decoration: underline; }}
     .positive {{ color: #0e9f6e; font-weight: 600; }}
     .negative {{ color: #c00; font-weight: 600; }}
@@ -1410,7 +1410,7 @@ def ui(
                     '<div class="momentum-sub-text">Most actively hiring this week</div>'
                     f'{m_items}'
                     '<div style="margin-top:12px;text-align:center">'
-                    '<a href="/ui/momentum" style="font-size:12px;color:#1a56db;font-weight:500;text-decoration:none">View full leaderboard &#8594;</a>'
+                    '<a href="/ui/momentum" style="font-size:12px;color:#0d9488;font-weight:500;text-decoration:none">View full leaderboard &#8594;</a>'
                     '</div></div>'
                 )
         except Exception:
@@ -1588,7 +1588,7 @@ def ui(
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sora:wght@600;800&display=swap" rel="stylesheet">
   <style>
     :root {{
-      --blue: #1a56db; --blue-light: #e8f0fe; --blue-mid: #3b7de8;
+      --primary: #0d9488; --primary-light: #f0fdfa; --primary-mid: #14b8a6;
       --green: #0e9f6e; --green-light: #e8f8f3; --orange: #ff6b35;
       --text: #111827; --text-mid: #4b5563; --text-light: #9ca3af;
       --border: #e5e7eb; --bg: #f9fafb; --white: #ffffff; --tag-bg: #f3f4f6;
@@ -1602,22 +1602,22 @@ def ui(
     /* TOPBAR */
     .topbar {{ background: var(--white); border-bottom: 1px solid var(--border); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
     .logo-area {{ display: flex; align-items: center; gap: 6px; }}
-    .logo {{ font-size: 18px; font-weight: 700; color: var(--blue); letter-spacing: -0.4px; }}
+    .logo {{ font-size: 18px; font-weight: 700; color: var(--primary); letter-spacing: -0.4px; }}
     .logo-by {{ font-size: 13px; color: var(--text-light); font-weight: 500; margin-left: 10px; display: inline-flex; align-items: center; gap: 5px; }}
     .logo-by svg {{ vertical-align: middle; }}
     .cubea-text {{ font-family: 'Sora', sans-serif; font-weight: 600; letter-spacing: -0.3px; }}
     .nav-right {{ display: flex; align-items: center; gap: 24px; }}
     .nav-right a {{ color: var(--text-mid); font-size: 13px; font-weight: 500; transition: color 0.15s; }}
-    .nav-right a:hover {{ color: var(--blue); }}
-    .nav-right a.active {{ color: var(--blue); font-weight: 600; }}
-    .btn-post {{ background: var(--blue); color: white !important; padding: 7px 16px; border-radius: 6px; font-size: 13px !important; font-weight: 600 !important; }}
-    .btn-post:hover {{ background: #1649c0 !important; }}
+    .nav-right a:hover {{ color: var(--primary); }}
+    .nav-right a.active {{ color: var(--primary); font-weight: 600; }}
+    .btn-post {{ background: var(--primary); color: white !important; padding: 7px 16px; border-radius: 6px; font-size: 13px !important; font-weight: 600 !important; }}
+    .btn-post:hover {{ background: #0f766e !important; }}
 
     /* ALPHA BAR */
     .alpha-bar {{ background: #fefce8; border-bottom: 1px solid #fde68a; text-align: center; padding: 9px 32px; font-size: 13px; color: #92400e; }}
 
     /* HERO STRIP */
-    .hero-strip {{ background: linear-gradient(135deg, #1a56db 0%, #2563eb 50%, #1d4ed8 100%); padding: 40px 32px 36px; color: white; }}
+    .hero-strip {{ background: linear-gradient(135deg, #111827 0%, #1f2937 50%, #111827 100%); padding: 40px 32px 36px; color: white; }}
     .hero-inner {{ max-width: 1100px; margin: 0 auto; }}
     .hero-strip h1 {{ font-size: 26px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }}
     .hero-strip p {{ font-size: 14px; opacity: 0.82; margin-bottom: 24px; font-weight: 400; }}
@@ -1631,8 +1631,8 @@ def ui(
     .search-select-wrap {{ display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-right: 1px solid var(--border); }}
     .search-select-wrap svg {{ color: #9ca3af; flex-shrink: 0; }}
     .search-select-wrap select {{ border: none; outline: none; font-family: 'Inter', sans-serif; font-size: 14px; color: var(--text); background: none; cursor: pointer; min-width: 130px; }}
-    .search-btn {{ background: var(--blue); color: white; border: none; padding: 13px 28px; font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 0.15s; }}
-    .search-btn:hover {{ background: #1649c0; }}
+    .search-btn {{ background: var(--primary); color: white; border: none; padding: 13px 28px; font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 0.15s; }}
+    .search-btn:hover {{ background: #0f766e; }}
 
     /* STATS ROW */
     .stats-strip {{ background: rgba(255,255,255,0.12); border-radius: 8px; display: inline-flex; gap: 0; margin-top: 20px; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }}
@@ -1645,7 +1645,7 @@ def ui(
     .quick-filters {{ max-width: 1100px; margin: 0 auto; padding: 14px 32px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
     .qf-label {{ font-size: 12px; color: var(--text-light); font-weight: 500; margin-right: 4px; }}
     .qf-tag {{ background: white; border: 1px solid var(--border); color: var(--text-mid); padding: 5px 12px; border-radius: 100px; font-size: 12px; cursor: pointer; transition: all 0.15s; font-weight: 500; }}
-    .qf-tag:hover, .qf-tag.active {{ border-color: var(--blue); color: var(--blue); background: var(--blue-light); }}
+    .qf-tag:hover, .qf-tag.active {{ border-color: var(--primary); color: var(--primary); background: var(--primary-light); }}
 
     /* MAIN LAYOUT */
     .main {{ max-width: 1100px; margin: 0 auto; padding: 0 32px 60px; display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: start; }}
@@ -1657,12 +1657,12 @@ def ui(
     .filter-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }}
     .filter-grid .full {{ grid-column: 1 / -1; }}
     .filter-select {{ width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; font-family: 'Inter', sans-serif; font-size: 12px; color: var(--text); outline: none; background: white; }}
-    .filter-select:focus {{ border-color: var(--blue); }}
+    .filter-select:focus {{ border-color: var(--primary); }}
     .chk-row {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
     .chk-label {{ display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; color: var(--text); white-space: nowrap; }}
-    .chk-label input {{ accent-color: var(--blue); width: 14px; height: 14px; }}
-    .sidebar-search-btn {{ width: 100%; margin-top: 10px; background: var(--blue); color: white; border: none; padding: 9px; border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; }}
-    .sidebar-search-btn:hover {{ background: #1649c0; }}
+    .chk-label input {{ accent-color: var(--primary); width: 14px; height: 14px; }}
+    .sidebar-search-btn {{ width: 100%; margin-top: 10px; background: var(--primary); color: white; border: none; padding: 9px; border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; }}
+    .sidebar-search-btn:hover {{ background: #0f766e; }}
 
     /* MOMENTUM BOX */
     .momentum-box {{ background: white; border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: var(--shadow); }}
@@ -1675,7 +1675,7 @@ def ui(
     .m-rank {{ font-size: 11px; font-weight: 600; color: var(--text-light); width: 14px; text-align: center; }}
     .m-name {{ flex: 1; font-size: 12px; color: var(--text); font-weight: 500; }}
     .m-bar-wrap {{ width: 50px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }}
-    .m-bar {{ height: 100%; background: var(--blue); border-radius: 2px; }}
+    .m-bar {{ height: 100%; background: var(--primary); border-radius: 2px; }}
     .m-delta {{ font-size: 11px; color: var(--green); font-weight: 600; min-width: 28px; text-align: right; }}
 
     /* JOBS AREA */
@@ -1688,20 +1688,20 @@ def ui(
     .sort-select {{ border: 1px solid var(--border); background: white; color: var(--text); font-family: 'Inter', sans-serif; font-size: 12px; padding: 5px 10px; border-radius: 6px; outline: none; cursor: pointer; }}
 
     /* ALERT BANNER */
-    .alert-banner {{ background: var(--blue-light); border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
-    .alert-text {{ font-size: 13px; color: #1e40af; display: flex; align-items: center; gap: 8px; }}
-    .btn-alert {{ background: var(--blue); color: white; border: none; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; white-space: nowrap; transition: background 0.15s; flex-shrink: 0; }}
-    .btn-alert:hover {{ background: #1649c0; }}
+    .alert-banner {{ background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
+    .alert-text {{ font-size: 13px; color: var(--text-mid); display: flex; align-items: center; gap: 8px; }}
+    .btn-alert {{ background: var(--primary); color: white; border: none; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; white-space: nowrap; transition: background 0.15s; flex-shrink: 0; }}
+    .btn-alert:hover {{ background: #0f766e; }}
 
     /* JOB CARD */
     .job-card {{ background: white; border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow); cursor: default; transition: border-color 0.15s, box-shadow 0.15s; position: relative; }}
-    .job-card:hover {{ border-color: var(--blue); box-shadow: var(--shadow-md); }}
+    .job-card:hover {{ border-color: var(--border); box-shadow: var(--shadow-md); }}
     .job-card.is-new {{ border-left: 3px solid var(--green); }}
     .job-date-label {{ position: absolute; top: 18px; right: 20px; font-size: 11px; color: var(--text-light); }}
     .company-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }}
-    .co-logo {{ width: 30px; height: 30px; border-radius: 6px; background: var(--blue-light); border: 1px solid #dbeafe; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--blue); flex-shrink: 0; }}
+    .co-logo {{ width: 30px; height: 30px; border-radius: 6px; background: var(--tag-bg); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--text-mid); flex-shrink: 0; }}
     .co-name {{ font-size: 13px; color: var(--text-mid); font-weight: 500; }}
-    .job-title-text {{ display: block; font-size: 16px; font-weight: 600; color: var(--blue); letter-spacing: -0.2px; margin-bottom: 8px; line-height: 1.3; }}
+    .job-title-text {{ display: block; font-size: 16px; font-weight: 600; color: var(--text); letter-spacing: -0.2px; margin-bottom: 8px; line-height: 1.3; }}
     .job-title-text:hover {{ text-decoration: underline; }}
     .job-meta-row {{ display: flex; align-items: center; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }}
     .meta-pill {{ display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-mid); }}
@@ -1710,21 +1710,21 @@ def ui(
     .job-footer-row {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
     .tags-left {{ display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }}
     .pill {{ font-size: 11px; padding: 3px 10px; border-radius: 100px; font-weight: 500; border: 1px solid; }}
-    .pill-type {{ background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }}
+    .pill-type {{ background: var(--tag-bg); color: var(--text-mid); border-color: var(--border); }}
     .pill-new {{ background: var(--green-light); color: var(--green); border-color: #a7f3d0; }}
     .pill-stale {{ background: #fef3c7; color: #92400e; border-color: #fde68a; }}
     .pill-source {{ background: var(--tag-bg); color: var(--text-light); border-color: var(--border); }}
     .actions-right {{ display: flex; align-items: center; gap: 8px; flex-shrink: 0; }}
     .btn-save {{ background: white; border: 1px solid var(--border); color: var(--text-mid); padding: 6px 14px; border-radius: 6px; font-size: 12px; font-family: 'Inter', sans-serif; font-weight: 500; cursor: pointer; transition: all 0.15s; }}
-    .btn-save:hover {{ border-color: var(--blue); color: var(--blue); }}
-    .btn-apply {{ display: inline-flex; align-items: center; gap: 4px; background: var(--blue); color: white; border: none; padding: 7px 18px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; transition: background 0.15s; }}
-    .btn-apply:hover {{ background: #1649c0; }}
+    .btn-save:hover {{ border-color: var(--primary); color: var(--primary); }}
+    .btn-apply {{ display: inline-flex; align-items: center; gap: 4px; background: var(--primary); color: white; border: none; padding: 7px 18px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; transition: background 0.15s; }}
+    .btn-apply:hover {{ background: #0f766e; }}
 
     /* PAGINATION */
     .pagination {{ display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 8px; }}
     .pg-btn {{ min-width: 34px; height: 34px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 13px; cursor: pointer; background: white; border: 1px solid var(--border); color: var(--text-mid); font-family: 'Inter', sans-serif; font-weight: 500; transition: all 0.15s; }}
-    .pg-btn.active {{ background: var(--blue); border-color: var(--blue); color: white; font-weight: 600; cursor: default; }}
-    .pg-btn:hover:not(.active) {{ border-color: var(--blue); color: var(--blue); }}
+    .pg-btn.active {{ background: var(--primary); border-color: var(--primary); color: white; font-weight: 600; cursor: default; }}
+    .pg-btn:hover:not(.active) {{ border-color: var(--primary); color: var(--primary); }}
     .pg-dots {{ color: var(--text-light); padding: 0 4px; font-size: 13px; }}
 
     /* MOBILE HAMBURGER */
@@ -1756,9 +1756,9 @@ def ui(
       padding: 12px 0;
       border-bottom: 1px solid var(--border);
     }}
-    .mobile-nav a.active {{ color: var(--blue); }}
+    .mobile-nav a.active {{ color: var(--primary); }}
     .mobile-nav .btn-post-mobile {{
-      background: var(--blue);
+      background: var(--primary);
       color: white;
       border: none;
       padding: 14px;
@@ -1904,21 +1904,21 @@ def ui(
       height: 44px;
       padding: 0 18px;
       border-radius: 100px;
-      background: var(--blue);
+      background: var(--primary);
       border: none;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      box-shadow: 0 4px 16px rgba(26, 86, 219, 0.4);
+      box-shadow: 0 4px 16px rgba(13, 148, 136, 0.4);
       transition: transform 0.2s, box-shadow 0.2s;
       position: relative;
       color: white;
     }}
     .chat-bubble:hover {{
       transform: scale(1.05);
-      box-shadow: 0 6px 24px rgba(26, 86, 219, 0.5);
+      box-shadow: 0 6px 24px rgba(13, 148, 136, 0.5);
     }}
     .chat-bubble-label {{
       font-size: 13px;
@@ -1940,7 +1940,7 @@ def ui(
       position: absolute;
       inset: -4px;
       border-radius: 100px;
-      background: var(--blue);
+      background: var(--primary);
       opacity: 0;
       animation: chatPulse 3s ease-in-out infinite;
       z-index: -1;
@@ -1982,7 +1982,7 @@ def ui(
       justify-content: space-between;
       padding: 14px 16px;
       border-bottom: 1px solid var(--border);
-      background: var(--blue);
+      background: var(--primary);
       color: white;
     }}
     .chat-panel-title {{
@@ -2035,7 +2035,7 @@ def ui(
       border-bottom-left-radius: 4px;
     }}
     .chat-msg.user {{
-      background: var(--blue);
+      background: var(--primary);
       color: white;
       align-self: flex-end;
       border-bottom-right-radius: 4px;
@@ -2087,17 +2087,17 @@ def ui(
       white-space: nowrap;
     }}
     .chat-chip:hover {{
-      border-color: var(--blue);
-      color: var(--blue);
-      background: var(--blue-light);
+      border-color: var(--primary);
+      color: var(--primary);
+      background: var(--primary-light);
     }}
     .chat-chip.selected {{
-      background: var(--blue);
+      background: var(--primary);
       color: white;
-      border-color: var(--blue);
+      border-color: var(--primary);
     }}
     .chat-chip-confirm {{
-      background: var(--blue);
+      background: var(--primary);
       color: white;
       border: none;
       padding: 8px 20px;
@@ -2110,7 +2110,7 @@ def ui(
       margin-top: 4px;
     }}
     .chat-chip-confirm:hover {{
-      background: #1649c0;
+      background: #0f766e;
     }}
     .chat-text-input {{
       width: 100%;
@@ -2125,7 +2125,7 @@ def ui(
       margin-top: 6px;
     }}
     .chat-text-input:focus {{
-      border-color: var(--blue);
+      border-color: var(--primary);
     }}
     .chat-start-over {{
       display: inline-block;
@@ -2136,7 +2136,7 @@ def ui(
       transition: color 0.15s;
     }}
     .chat-start-over:hover {{
-      color: var(--blue);
+      color: var(--primary);
     }}
     @media (max-width: 768px) {{
       .chat-widget {{
