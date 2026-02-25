@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from db_config import get_db_path
 from html import escape
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlparse
 import re
@@ -82,12 +83,6 @@ def http_get_json(url: str, timeout: int = 45, retries: int = 2):
     raise last_err
 
 
-# In-memory cache for Greenhouse job detail (English-only)
-DETAIL_CACHE = {}  # (source, token, job_id) -> {"text": str, "time": datetime}
-
-# In-memory cache for job listings per company
-JOB_CACHE = {}  # (source, token) -> {"jobs": list, "time": datetime}
-JOB_CACHE_TTL = timedelta(minutes=10)
 
 
 # ----------------------------
@@ -170,7 +165,6 @@ def _import_bundle_data(data: dict) -> dict:
         summary["company_daily_stats"] = len(rows)
 
     elapsed_ms = int((_time.time() - t0) * 1000)
-    JOB_CACHE.clear()
     logger.info("Bundle imported: %s (%dms)", summary, elapsed_ms)
     return {"summary": summary, "elapsed_ms": elapsed_ms}
 
@@ -575,21 +569,178 @@ _NL_CITIES = frozenset({
 })
 
 
+_JUNK_CITIES = frozenset({
+    "hybrid", "remote", "in-office", "all offices", "n/a", "na",
+    "distributed", "hybrid; in-office", "distributed; hybrid",
+    "united states", "us-rem", "us-remote",
+})
+
+_CITY_ALIASES = {
+    "den bosch": "'s-Hertogenbosch",
+    "s-hertogenbosch": "'s-Hertogenbosch",
+    "'s-hertogenbosch": "'s-Hertogenbosch",
+    "'s- hertogenbosch": "'s-Hertogenbosch",
+    "\u2019s-hertogenbosch": "'s-Hertogenbosch",
+    "the hague": "Den Haag",
+    "den hague": "Den Haag",
+    "capelle a/d ijssel": "Capelle aan den IJssel",
+    "capelle aan den ijssel": "Capelle aan den IJssel",
+    "rijswijk (zh)": "Rijswijk",
+    "rijswijk (zh.)": "Rijswijk",
+    "'t harde": "'t Harde",
+}
+
+# NL city -> province mapping (top ~150 cities)
+CITY_TO_PROVINCE = {
+    # Noord-Holland
+    "amsterdam": "Noord-Holland", "haarlem": "Noord-Holland",
+    "zaandam": "Noord-Holland", "hilversum": "Noord-Holland",
+    "alkmaar": "Noord-Holland", "hoofddorp": "Noord-Holland",
+    "amstelveen": "Noord-Holland", "purmerend": "Noord-Holland",
+    "hoorn": "Noord-Holland", "heerhugowaard": "Noord-Holland",
+    "beverwijk": "Noord-Holland", "den helder": "Noord-Holland",
+    "schiphol": "Noord-Holland", "diemen": "Noord-Holland",
+    "bussum": "Noord-Holland", "naarden": "Noord-Holland",
+    "weesp": "Noord-Holland", "uithoorn": "Noord-Holland",
+    "aalsmeer": "Noord-Holland", "castricum": "Noord-Holland",
+    "heemskerk": "Noord-Holland", "huizen": "Noord-Holland",
+    "ijmuiden": "Noord-Holland", "enkhuizen": "Noord-Holland",
+    "muiden": "Noord-Holland", "badhoevedorp": "Noord-Holland",
+    "schagen": "Noord-Holland", "laren": "Noord-Holland",
+    "blaricum": "Noord-Holland", "landsmeer": "Noord-Holland",
+    # Zuid-Holland
+    "rotterdam": "Zuid-Holland", "den haag": "Zuid-Holland",
+    "delft": "Zuid-Holland", "leiden": "Zuid-Holland",
+    "dordrecht": "Zuid-Holland", "zoetermeer": "Zuid-Holland",
+    "schiedam": "Zuid-Holland", "gouda": "Zuid-Holland",
+    "vlaardingen": "Zuid-Holland", "capelle aan den ijssel": "Zuid-Holland",
+    "alphen aan den rijn": "Zuid-Holland", "rijswijk": "Zuid-Holland",
+    "spijkenisse": "Zuid-Holland", "leidschendam": "Zuid-Holland",
+    "voorburg": "Zuid-Holland", "wassenaar": "Zuid-Holland",
+    "katwijk": "Zuid-Holland", "gorinchem": "Zuid-Holland",
+    "nieuwegein": "Zuid-Holland", "papendrecht": "Zuid-Holland",
+    "barendrecht": "Zuid-Holland", "voorschoten": "Zuid-Holland",
+    "leiderdorp": "Zuid-Holland", "waddinxveen": "Zuid-Holland",
+    "sassenheim": "Zuid-Holland", "naaldwijk": "Zuid-Holland",
+    "maassluis": "Zuid-Holland", "hellevoetsluis": "Zuid-Holland",
+    # Noord-Brabant
+    "eindhoven": "Noord-Brabant", "tilburg": "Noord-Brabant",
+    "breda": "Noord-Brabant", "'s-hertogenbosch": "Noord-Brabant",
+    "helmond": "Noord-Brabant", "oss": "Noord-Brabant",
+    "roosendaal": "Noord-Brabant", "bergen op zoom": "Noord-Brabant",
+    "waalwijk": "Noord-Brabant", "uden": "Noord-Brabant",
+    "veghel": "Noord-Brabant", "best": "Noord-Brabant",
+    "veldhoven": "Noord-Brabant", "valkenswaard": "Noord-Brabant",
+    "boxtel": "Noord-Brabant", "dongen": "Noord-Brabant",
+    "eersel": "Noord-Brabant", "geldrop": "Noord-Brabant",
+    "son": "Noord-Brabant", "nuenen": "Noord-Brabant",
+    # Gelderland
+    "arnhem": "Gelderland", "nijmegen": "Gelderland",
+    "apeldoorn": "Gelderland", "ede": "Gelderland",
+    "deventer": "Gelderland", "zutphen": "Gelderland",
+    "doetinchem": "Gelderland", "harderwijk": "Gelderland",
+    "wageningen": "Gelderland", "barneveld": "Gelderland",
+    "tiel": "Gelderland", "zevenaar": "Gelderland",
+    "elst": "Gelderland", "veenendaal": "Gelderland",
+    "bennekom": "Gelderland", "culemborg": "Gelderland",
+    "winterswijk": "Gelderland", "ermelo": "Gelderland",
+    "duiven": "Gelderland", "nunspeet": "Gelderland",
+    "'t harde": "Gelderland", "aalten": "Gelderland",
+    # Utrecht
+    "utrecht": "Utrecht", "amersfoort": "Utrecht",
+    "nieuwegein": "Utrecht", "veenendaal": "Utrecht",
+    "zeist": "Utrecht", "de bilt": "Utrecht",
+    "bilthoven": "Utrecht", "driebergen": "Utrecht",
+    "soest": "Utrecht", "woerden": "Utrecht",
+    "ijsselstein": "Utrecht", "maarssen": "Utrecht",
+    "houten": "Utrecht", "vianen": "Utrecht",
+    "breukelen": "Utrecht", "bunnik": "Utrecht",
+    "baarn": "Utrecht",
+    # Overijssel
+    "enschede": "Overijssel", "zwolle": "Overijssel",
+    "hengelo": "Overijssel", "almelo": "Overijssel",
+    "kampen": "Overijssel", "oldenzaal": "Overijssel",
+    "hardenberg": "Overijssel", "raalte": "Overijssel",
+    "rijssen": "Overijssel", "borne": "Overijssel",
+    "steenwijk": "Overijssel", "vriezenveen": "Overijssel",
+    # Limburg
+    "maastricht": "Limburg", "venlo": "Limburg",
+    "heerlen": "Limburg", "sittard": "Limburg",
+    "roermond": "Limburg", "weert": "Limburg",
+    "kerkrade": "Limburg", "geleen": "Limburg",
+    "brunssum": "Limburg", "venray": "Limburg",
+    # Groningen
+    "groningen": "Groningen", "hoogezand": "Groningen",
+    "veendam": "Groningen", "stadskanaal": "Groningen",
+    "winschoten": "Groningen", "delfzijl": "Groningen",
+    # Friesland
+    "leeuwarden": "Friesland", "drachten": "Friesland",
+    "sneek": "Friesland", "heerenveen": "Friesland",
+    "harlingen": "Friesland",
+    # Flevoland
+    "almere": "Flevoland", "lelystad": "Flevoland",
+    "emmeloord": "Flevoland", "dronten": "Flevoland",
+    "zeewolde": "Flevoland",
+    # Drenthe
+    "emmen": "Drenthe", "assen": "Drenthe",
+    "hoogeveen": "Drenthe", "meppel": "Drenthe",
+    "coevorden": "Drenthe",
+    # Zeeland
+    "middelburg": "Zeeland", "vlissingen": "Zeeland",
+    "goes": "Zeeland", "terneuzen": "Zeeland",
+    # Additional cities from data
+    "bergeijk": "Noord-Brabant", "bladel": "Noord-Brabant",
+    "boxmeer": "Noord-Brabant", "budel": "Noord-Brabant",
+    "eersel": "Noord-Brabant", "oisterwijk": "Noord-Brabant",
+    "drunen": "Noord-Brabant", "someren": "Noord-Brabant",
+    "son en breugel": "Noord-Brabant",
+    "bleiswijk": "Zuid-Holland", "waddinxveen": "Zuid-Holland",
+    "buren": "Gelderland", "epe": "Gelderland",
+    "lochem": "Gelderland", "putten": "Gelderland",
+    "wezep": "Gelderland", "hattem": "Gelderland",
+    "de bilt": "Utrecht", "bilthoven": "Utrecht",
+    "bunschoten": "Utrecht", "leusden": "Utrecht",
+    "wijk bij duurstede": "Utrecht",
+    "oldenzaal": "Overijssel", "raalte": "Overijssel",
+    "vroomshoop": "Overijssel",
+}
+
+
 def _normalize_city(city: str) -> str | None:
-    """Clean up city name: strip parentheticals, qualifiers, and title-case."""
+    """Clean up city name: strip junk, split multi-city, apply aliases."""
     if not city:
+        return None
+    city = city.strip()
+    # Drop junk values
+    if city.lower() in _JUNK_CITIES:
         return None
     # Remove parenthetical suffixes: (on-site), (hybrid), (p), (NL), etc.
     city = re.sub(r"\s*\(.*?\)", "", city).strip()
     # Remove trailing qualifiers
     city = re.sub(r"\s+(?:HQ|Office|Campus|Area|Region|Center|Centre)$", "", city, flags=re.IGNORECASE).strip()
+    # Remove leading "US > State > " prefixes
+    if city.startswith("US >") or city.startswith("US-"):
+        return None
     if not city:
         return None
-    # Match against known NL cities for consistent casing
+    # Multi-city: take first city only
+    for sep in [";", "|", "/"]:
+        if sep in city:
+            # Exception: keep " a/d " in "Capelle a/d IJssel"
+            if sep == "/" and " a/d " in city.lower():
+                continue
+            city = city.split(sep)[0].strip()
+    # Trailing punctuation
+    city = city.rstrip(";.,")
+    if not city:
+        return None
+    # Apply aliases
     cl = city.lower()
-    for known in _NL_CITIES:
-        if cl == known:
-            return city.title()
+    if cl in _CITY_ALIASES:
+        return _CITY_ALIASES[cl]
+    # Match against known NL cities for consistent casing
+    if cl in _NL_CITIES or cl in CITY_TO_PROVINCE:
+        return city.title()
     return city
 
 
@@ -806,29 +957,44 @@ def normalize_jobs(company_name: str, source: str, token: str):
 # Aggregate jobs + filters
 # ----------------------------
 def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0):
-    companies = load_companies()
-    if company:
-        companies = [c for c in companies if c["name"].lower() == company.lower()]
+    """Query the jobs table directly -- no live ATS API calls."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
 
-    now = datetime.now(timezone.utc)
+        clauses = ["is_active = 1"]
+        params = []
+
+        if company:
+            clauses.append("company_name = ?")
+            params.append(company)
+        if q:
+            clauses.append("LOWER(title) LIKE ?")
+            params.append(f"%{q.lower()}%")
+
+        where = " AND ".join(clauses)
+        rows = conn.execute(
+            f"SELECT * FROM jobs WHERE {where} ORDER BY company_name, title",
+            params,
+        ).fetchall()
+
     all_jobs = []
-    for c in companies:
-        key = (c["source"], c["token"])
-        cached = JOB_CACHE.get(key)
-        if cached and now - cached["time"] < JOB_CACHE_TTL:
-            all_jobs.extend(cached["jobs"])
-            continue
-        try:
-            jobs = normalize_jobs(c["name"], c["source"], c["token"])
-            JOB_CACHE[key] = {"jobs": jobs, "time": now}
-            all_jobs.extend(jobs)
-        except Exception as e:
-            logger.warning("Failed to fetch jobs for %s (%s): %s", c["name"], c["source"], e)
-            continue
-
-    if q:
-        ql = q.lower()
-        all_jobs = [j for j in all_jobs if ql in (j.get("title") or "").lower()]
+    for r in rows:
+        all_jobs.append({
+            "company": r["company_name"],
+            "source": r["source"],
+            "title": r["title"],
+            "department": r["department"] or "",
+            "job_type": r["job_type"] or "",
+            "location_raw": r["location_raw"] or "",
+            "city": _normalize_city(r["city"]) or "",
+            "country": r["country"] or "",
+            "apply_url": r["url"] or "",
+            "updated_at": r["posted_at"] or r["first_seen_at"] or "",
+            "is_new_today": is_new_today(r["first_seen_at"] or ""),
+            "snippet": "",
+        })
 
     if new_today_only:
         all_jobs = [j for j in all_jobs if j.get("is_new_today")]
@@ -846,7 +1012,6 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
     elif effective_lang == "nl":
         all_jobs = [j for j in all_jobs if title_looks_dutch(j.get("title", ""))]
 
-    all_jobs.sort(key=lambda x: (x.get("company", ""), x.get("title", "")))
     return all_jobs[:limit] if limit else all_jobs
 
 
@@ -961,28 +1126,18 @@ def ping():
 
 @app.get("/health")
 def health(full: bool = Query(default=False)):
-    report = []
-    total = 0
-    now = datetime.now(timezone.utc)
-    for c in load_companies():
-        key = (c["source"], c["token"])
-        cached = JOB_CACHE.get(key)
-        cache_age_sec = int((now - cached["time"]).total_seconds()) if cached else None
-        try:
-            if cached and now - cached["time"] < JOB_CACHE_TTL:
-                jobs = cached["jobs"]
-            else:
-                jobs = normalize_jobs(c["name"], c["source"], c["token"])
-                JOB_CACHE[key] = {"jobs": jobs, "time": now}
-                cache_age_sec = 0
-            count = sum(1 for j in jobs if not j.get("_placeholder"))
-            total += count
-            report.append({"company": c["name"], "source": c["source"], "jobs": count, "status": "ok", "cache_age_sec": cache_age_sec})
-        except Exception as e:
-            report.append({"company": c["name"], "source": c["source"], "jobs": 0, "status": "error", "error": str(e), "cache_age_sec": cache_age_sec})
-    result = {"total_jobs": total, "cache_ttl_sec": int(JOB_CACHE_TTL.total_seconds()), "companies": report}
-    if full:
-        with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE) as conn:
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+        rows = conn.execute(
+            "SELECT company_name, source, COUNT(*) as cnt "
+            "FROM jobs WHERE is_active = 1 "
+            "GROUP BY company_name, source ORDER BY company_name"
+        ).fetchall()
+        report = [{"company": r[0], "source": r[1], "jobs": r[2], "status": "ok"} for r in rows]
+        total = sum(r[2] for r in rows)
+        result = {"total_jobs": total, "companies": report}
+        if full:
             result["scraped_jobs_total"] = conn.execute("SELECT COUNT(*) FROM scraped_jobs").fetchone()[0]
     return result
 
@@ -1167,9 +1322,23 @@ def ui(
     countries = unique([j.get("country") for j in all_jobs if j.get("country")])
     country_jobs = [j for j in all_jobs if soft_country_match(j, country)] if country else all_jobs
     cities = unique([j.get("city") for j in country_jobs if j.get("city")])
-    all_visible = [j for j in country_jobs
-                   if not j.get("_placeholder")
-                   and (not city or (j.get("city") or "").lower() == city.lower())]
+    # Resolve province filter: city=province:Noord-Holland -> match all cities in that province
+    _province_filter = None
+    _city_filter = city
+    if city and city.startswith("province:"):
+        _province_filter = city[len("province:"):]
+        _city_filter = None
+
+    if _province_filter:
+        prov_lower = _province_filter.lower()
+        prov_cities = {c for c, p in CITY_TO_PROVINCE.items() if p.lower() == prov_lower}
+        all_visible = [j for j in country_jobs
+                       if not j.get("_placeholder")
+                       and (j.get("city") or "").lower() in prov_cities]
+    else:
+        all_visible = [j for j in country_jobs
+                       if not j.get("_placeholder")
+                       and (not _city_filter or (j.get("city") or "").lower() == _city_filter.lower())]
     total_real = sum(1 for j in all_visible if not j.get("_placeholder"))
     total_visible = len(all_visible)
     total_pages = (total_visible + PER_PAGE - 1) // PER_PAGE if total_visible else 1
@@ -1233,7 +1402,34 @@ def ui(
         for c in all_companies
     )
     country_options = "".join(opt(c, country) for c in countries if c != "Netherlands")
-    city_options = "".join(opt(c, city) for c in cities)
+
+    # Build province-grouped city dropdown (NL) or flat list (other countries)
+    is_nl = (country or "").lower() in ("netherlands", "")
+    if is_nl and cities:
+        province_cities = defaultdict(list)
+        for c in cities:
+            prov = CITY_TO_PROVINCE.get(c.lower())
+            if prov:
+                province_cities[prov].append(c)
+        prov_order = [
+            "Noord-Holland", "Zuid-Holland", "Utrecht", "Noord-Brabant",
+            "Gelderland", "Overijssel", "Limburg", "Groningen",
+            "Friesland", "Flevoland", "Drenthe", "Zeeland",
+        ]
+        city_options = ""
+        for prov in prov_order:
+            pcs = sorted(province_cities.get(prov, []))
+            if pcs:
+                prov_val = f"province:{prov}"
+                prov_sel = "selected" if city == prov_val else ""
+                job_count = sum(1 for j in country_jobs if (j.get("city") or "").lower() in {c.lower() for c in pcs})
+                city_options += f'<option value="{escape(prov_val)}" {prov_sel} style="font-weight:700">{escape(prov)} ({job_count})</option>'
+                city_options += "".join(
+                    f'<option value="{escape(c)}" {"selected" if c == city else ""}>&nbsp;&nbsp;&nbsp;{escape(c)}</option>'
+                    for c in pcs
+                )
+    else:
+        city_options = "".join(opt(c, city) for c in cities)
 
     def render_card(j):
         apply_url = escape(j.get("apply_url") or "")
