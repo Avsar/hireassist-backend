@@ -1312,13 +1312,303 @@ def ui_momentum():
     <div class="nav-right">
       <a href="/ui">Jobs</a>
       <a href="#" style="color:#9ca3af;cursor:default">Companies</a>
-      <a href="/ui/momentum" class="active">Company Momentum</a>
+      <a href="/ui/momentum" class="active">Momentum</a>
+      <a href="/ui/report">Report</a>
     </div>
   </div>
   <div class="alpha-bar">Alpha -- coverage may be incomplete. Please share feedback.</div>
   <div class="container">
     <h1>Company Momentum (Top 20)</h1>
     {table_html}
+  </div>
+</body></html>"""
+    return HTMLResponse(html)
+
+
+# ── Coverage Report ────────────────────────────────────────────
+@app.get("/ui/report", response_class=HTMLResponse)
+def ui_report():
+    """Coverage report dashboard -- discovery progress and gaps."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+
+        # --- Overall stats ---
+        total_companies = conn.execute("SELECT COUNT(*) FROM companies WHERE active=1").fetchone()[0]
+        active_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE is_active=1").fetchone()[0]
+        new_today = conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE is_active=1 AND DATE(first_seen_at)=DATE('now')"
+        ).fetchone()[0]
+
+        # Discovery candidates queued
+        try:
+            queued_candidates = conn.execute(
+                "SELECT COUNT(*) FROM discovery_candidates WHERE status='new'"
+            ).fetchone()[0]
+        except Exception:
+            queued_candidates = 0
+
+        # --- Province coverage from jobs ---
+        city_rows = conn.execute(
+            "SELECT LOWER(city) as c, COUNT(DISTINCT company_name) as cos, COUNT(*) as jobs "
+            "FROM jobs WHERE is_active=1 AND city!='' GROUP BY c"
+        ).fetchall()
+
+        province_data = {}
+        for prov in sorted(set(CITY_TO_PROVINCE.values())):
+            province_data[prov] = {"companies": 0, "jobs": 0, "cities_covered": 0, "cities_total": 0}
+
+        # Count total cities per province
+        for _city, prov in CITY_TO_PROVINCE.items():
+            province_data[prov]["cities_total"] += 1
+
+        for row in city_rows:
+            prov = CITY_TO_PROVINCE.get(row["c"], "")
+            if prov and prov in province_data:
+                province_data[prov]["companies"] += row["cos"]
+                province_data[prov]["jobs"] += row["jobs"]
+                province_data[prov]["cities_covered"] += 1
+
+        # --- Discovery pipeline by region ---
+        try:
+            disc_rows = conn.execute(
+                "SELECT LOWER(region) as reg, status, COUNT(*) as cnt "
+                "FROM discovery_candidates GROUP BY reg, status"
+            ).fetchall()
+            disc_pipeline = {}
+            for row in disc_rows:
+                reg = row["reg"] or "unknown"
+                if reg not in disc_pipeline:
+                    disc_pipeline[reg] = {"new": 0, "processed": 0, "rejected": 0}
+                disc_pipeline[reg][row["status"]] = row["cnt"]
+        except Exception:
+            disc_pipeline = {}
+
+        # --- ATS breakdown ---
+        ats_rows = conn.execute(
+            "SELECT source, COUNT(*) as cnt FROM companies WHERE active=1 GROUP BY source ORDER BY cnt DESC"
+        ).fetchall()
+
+        # --- Eindhoven deep dive ---
+        ehv_companies = conn.execute(
+            "SELECT company_name, COUNT(*) as cnt FROM jobs "
+            "WHERE is_active=1 AND LOWER(city)='eindhoven' "
+            "GROUP BY company_name ORDER BY cnt DESC"
+        ).fetchall()
+
+        ehv_departments = conn.execute(
+            "SELECT department, COUNT(*) as cnt FROM jobs "
+            "WHERE is_active=1 AND LOWER(city)='eindhoven' AND department!='' "
+            "GROUP BY department ORDER BY cnt DESC LIMIT 15"
+        ).fetchall()
+
+        ehv_disc = disc_pipeline.get("eindhoven", {"new": 0, "processed": 0, "rejected": 0})
+
+        # --- Zero-job companies count ---
+        zero_job_cos = conn.execute(
+            "SELECT COUNT(*) FROM companies WHERE active=1 AND name NOT IN "
+            "(SELECT DISTINCT company_name FROM jobs WHERE is_active=1)"
+        ).fetchone()[0]
+
+    # --- Build province rows ---
+    province_rows_html = ""
+    for prov in sorted(province_data.keys()):
+        d = province_data[prov]
+        if d["jobs"] >= 100:
+            color = "#0e9f6e"
+            bg = "#e8f8f3"
+        elif d["jobs"] > 0:
+            color = "#d97706"
+            bg = "#fef3c7"
+        else:
+            color = "#dc2626"
+            bg = "#fef2f2"
+        badge = f'<span style="background:{bg};color:{color};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">{d["jobs"]}</span>'
+        province_rows_html += (
+            f"<tr>"
+            f"<td style='font-weight:600'>{escape(prov)}</td>"
+            f"<td>{d['companies']}</td>"
+            f"<td>{badge}</td>"
+            f"<td>{d['cities_covered']} / {d['cities_total']}</td>"
+            f"</tr>"
+        )
+
+    # --- ATS breakdown rows ---
+    ats_html = ""
+    for row in ats_rows:
+        ats_html += f"<tr><td style='font-weight:500'>{escape(row['source'])}</td><td>{row['cnt']}</td></tr>"
+
+    # --- Eindhoven companies rows ---
+    ehv_html = ""
+    for row in ehv_companies[:15]:
+        ehv_html += f"<tr><td>{escape(row['company_name'])}</td><td>{row['cnt']}</td></tr>"
+
+    # --- Eindhoven departments ---
+    dept_html = ""
+    for row in ehv_departments:
+        dept_html += f"<tr><td>{escape(row['department'])}</td><td>{row['cnt']}</td></tr>"
+
+    # --- Action items ---
+    actions = []
+    if ehv_disc["new"] > 0:
+        actions.append(f"<strong>{ehv_disc['new']}</strong> discovery candidates queued in Eindhoven -- run <code>agent_discover.py</code> to process")
+    if queued_candidates > 0:
+        actions.append(f"<strong>{queued_candidates}</strong> total candidates queued across all regions")
+    if zero_job_cos > 0:
+        actions.append(f"<strong>{zero_job_cos}</strong> tracked companies have 0 active jobs -- may need ATS re-sync or verification")
+    # Brabant cities with no coverage
+    brabant_empty = [c.title() for c, p in CITY_TO_PROVINCE.items()
+                     if p == "Noord-Brabant" and not any(r["c"] == c for r in city_rows)]
+    if brabant_empty:
+        actions.append(f"<strong>{len(brabant_empty)}</strong> Brabant cities with no job coverage: {', '.join(brabant_empty[:8])}{'...' if len(brabant_empty) > 8 else ''}")
+
+    actions_html = "".join(f"<li style='margin-bottom:8px'>{a}</li>" for a in actions)
+    if not actions_html:
+        actions_html = "<li>No action items -- coverage looks good!</li>"
+
+    # --- Discovery pipeline table ---
+    disc_html = ""
+    for reg in sorted(disc_pipeline.keys()):
+        d = disc_pipeline[reg]
+        total = d["new"] + d["processed"] + d["rejected"]
+        disc_html += (
+            f"<tr>"
+            f"<td style='font-weight:500'>{escape(reg.title())}</td>"
+            f"<td>{total}</td>"
+            f"<td>{d['processed']}</td>"
+            f"<td>{d['new']}</td>"
+            f"<td>{d['rejected']}</td>"
+            f"</tr>"
+        )
+
+    html = f"""<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8"/><title>Coverage Report - HireAssist</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sora:wght@600;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: 'Inter', sans-serif; background: #f9fafb; color: #111827; font-size: 14px; line-height: 1.5; }}
+    a {{ text-decoration: none; }}
+    .topbar {{ background: #fff; border-bottom: 1px solid #e5e7eb; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
+    .logo {{ font-size: 18px; font-weight: 700; color: #0d9488; letter-spacing: -0.4px; }}
+    .logo-by {{ font-size: 13px; color: #6b7280; font-weight: 500; margin-left: 10px; display: inline-flex; align-items: center; gap: 5px; }}
+    .logo-by svg {{ vertical-align: middle; }}
+    .cubea-text {{ font-family: 'Sora', sans-serif; font-weight: 600; letter-spacing: -0.3px; }}
+    .nav-right {{ display: flex; align-items: center; gap: 24px; }}
+    .nav-right a {{ color: #4b5563; font-size: 13px; font-weight: 500; transition: color 0.15s; }}
+    .nav-right a:hover {{ color: #0d9488; }}
+    .nav-right a.active {{ color: #0d9488; font-weight: 600; }}
+    .alpha-bar {{ background: #fefce8; border-bottom: 1px solid #fde68a; text-align: center; padding: 9px 32px; font-size: 13px; color: #92400e; }}
+    .container {{ max-width: 1100px; margin: 24px auto; padding: 0 32px; }}
+    h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 20px; letter-spacing: -0.3px; }}
+    h2 {{ font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #111827; }}
+
+    .stat-cards {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }}
+    .stat-card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+    .stat-card .label {{ font-size: 12px; color: #9ca3af; font-weight: 500; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }}
+    .stat-card .value {{ font-size: 28px; font-weight: 700; color: #111827; letter-spacing: -0.5px; }}
+    .stat-card .value.teal {{ color: #0d9488; }}
+
+    .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }}
+    .card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+
+    table {{ width: 100%; border-collapse: collapse; }}
+    th {{ text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1px solid #e5e7eb; }}
+    td {{ padding: 8px 12px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }}
+    tr:last-child td {{ border-bottom: none; }}
+
+    .actions {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 32px; }}
+    .actions ul {{ list-style: none; padding: 0; }}
+    .actions li {{ padding: 8px 0 8px 24px; position: relative; font-size: 13px; color: #4b5563; }}
+    .actions li::before {{ content: "->"; position: absolute; left: 0; color: #0d9488; font-weight: 700; }}
+    code {{ background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 12px; }}
+  </style>
+</head><body>
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="logo">HireAssist</span>
+      <span class="logo-by">by <a href="https://cubea.nl/" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none"><svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></a></span>
+    </div>
+    <div class="nav-right">
+      <a href="/ui">Jobs</a>
+      <a href="#" style="color:#9ca3af;cursor:default">Companies</a>
+      <a href="/ui/momentum">Momentum</a>
+      <a href="/ui/report" class="active">Report</a>
+    </div>
+  </div>
+  <div class="alpha-bar">Alpha -- coverage may be incomplete. Please share feedback.</div>
+  <div class="container">
+    <h1>Coverage Report</h1>
+
+    <!-- STAT CARDS -->
+    <div class="stat-cards">
+      <div class="stat-card"><div class="label">Companies Tracked</div><div class="value">{total_companies:,}</div></div>
+      <div class="stat-card"><div class="label">Active Jobs</div><div class="value teal">{active_jobs:,}</div></div>
+      <div class="stat-card"><div class="label">New Today</div><div class="value">{new_today:,}</div></div>
+      <div class="stat-card"><div class="label">Candidates Queued</div><div class="value">{queued_candidates:,}</div></div>
+    </div>
+
+    <!-- ACTION ITEMS -->
+    <div class="actions">
+      <h2>Action Items</h2>
+      <ul>{actions_html}</ul>
+    </div>
+
+    <!-- PROVINCE TABLE -->
+    <div class="card" style="margin-bottom:32px">
+      <h2>Province Coverage</h2>
+      <table>
+        <tr><th>Province</th><th>Companies</th><th>Active Jobs</th><th>City Coverage</th></tr>
+        {province_rows_html}
+      </table>
+    </div>
+
+    <!-- 2-COL GRID -->
+    <div class="grid-2">
+      <div class="card">
+        <h2>ATS Platform Breakdown</h2>
+        <table>
+          <tr><th>Platform</th><th>Companies</th></tr>
+          {ats_html}
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Discovery Pipeline by Region</h2>
+        <table>
+          <tr><th>Region</th><th>Total</th><th>Processed</th><th>Queued</th><th>Rejected</th></tr>
+          {disc_html if disc_html else "<tr><td colspan='5' style='color:#9ca3af;text-align:center;padding:20px'>No discovery data yet</td></tr>"}
+        </table>
+      </div>
+    </div>
+
+    <!-- EINDHOVEN DEEP DIVE -->
+    <h1 style="margin-top:8px">Eindhoven Deep Dive</h1>
+    <div class="stat-cards" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">
+      <div class="stat-card"><div class="label">Companies with Jobs</div><div class="value teal">{len(ehv_companies)}</div></div>
+      <div class="stat-card"><div class="label">Candidates Queued</div><div class="value">{ehv_disc['new']}</div></div>
+      <div class="stat-card"><div class="label">Candidates Processed</div><div class="value">{ehv_disc['processed']}</div></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>Top Hiring Companies</h2>
+        <table>
+          <tr><th>Company</th><th>Jobs</th></tr>
+          {ehv_html if ehv_html else "<tr><td colspan='2' style='color:#9ca3af;text-align:center;padding:20px'>No jobs in Eindhoven</td></tr>"}
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Departments</h2>
+        <table>
+          <tr><th>Department</th><th>Jobs</th></tr>
+          {dept_html if dept_html else "<tr><td colspan='2' style='color:#9ca3af;text-align:center;padding:20px'>No department data</td></tr>"}
+        </table>
+      </div>
+    </div>
+
   </div>
 </body></html>"""
     return HTMLResponse(html)
@@ -2176,7 +2466,8 @@ def ui(
   <div class="nav-right">
     <a href="/ui" class="active">Jobs</a>
     <a href="#" style="color:var(--text-light);cursor:default">Companies</a>
-    <a href="/ui/momentum">Company Momentum</a>
+    <a href="/ui/momentum">Momentum</a>
+    <a href="/ui/report">Report</a>
     <a href="#" style="color:var(--text-light);cursor:default">For Employers</a>
     <a href="#" class="btn-post">Post a Job</a>
   </div>
@@ -2188,7 +2479,8 @@ def ui(
 <div class="mobile-nav" id="mobileNav">
   <a href="/ui" class="active">Jobs</a>
   <a href="#">Companies</a>
-  <a href="/ui/momentum">Company Momentum</a>
+  <a href="/ui/momentum">Momentum</a>
+  <a href="/ui/report">Report</a>
   <a href="#">For Employers</a>
   <button class="btn-post-mobile">Post a Job</button>
 </div>
