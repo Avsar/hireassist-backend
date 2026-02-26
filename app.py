@@ -1311,7 +1311,7 @@ def ui_momentum():
     </div>
     <div class="nav-right">
       <a href="/ui">Jobs</a>
-      <a href="#" style="color:#9ca3af;cursor:default">Companies</a>
+      <a href="/ui/candidates">Candidates</a>
       <a href="/ui/momentum" class="active">Momentum</a>
       <a href="/ui/report">Report</a>
     </div>
@@ -1532,7 +1532,7 @@ def ui_report():
     </div>
     <div class="nav-right">
       <a href="/ui">Jobs</a>
-      <a href="#" style="color:#9ca3af;cursor:default">Companies</a>
+      <a href="/ui/candidates">Candidates</a>
       <a href="/ui/momentum">Momentum</a>
       <a href="/ui/report" class="active">Report</a>
     </div>
@@ -1611,6 +1611,339 @@ def ui_report():
 
   </div>
 </body></html>"""
+    return HTMLResponse(html)
+
+
+# ---------------------------------------------------------------------------
+# /ui/candidates -- discovery candidates browser
+# ---------------------------------------------------------------------------
+@app.get("/ui/candidates", response_class=HTMLResponse)
+def ui_candidates(
+    status: str | None = Query(default=None),
+    city: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+):
+    """Browsable, filterable table of discovery_candidates."""
+    SOURCE_LABELS = {"osm": "OSM", "kvk": "KVK", "google_places": "Google Places"}
+
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+
+        # -- summary stats (unfiltered) --
+        try:
+            status_rows = conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM discovery_candidates GROUP BY status"
+            ).fetchall()
+            stats = {r["status"]: r["cnt"] for r in status_rows}
+        except Exception:
+            stats = {}
+
+        total = sum(stats.values())
+        new_count = stats.get("new", 0)
+        processed_count = stats.get("processed", 0)
+        rejected_count = stats.get("rejected", 0)
+
+        # -- distinct cities & sources for dropdowns --
+        try:
+            all_cities = [r["city"] for r in conn.execute(
+                "SELECT DISTINCT city FROM discovery_candidates WHERE city IS NOT NULL AND city != '' ORDER BY city"
+            ).fetchall()]
+        except Exception:
+            all_cities = []
+
+        try:
+            all_sources = [r["source"] for r in conn.execute(
+                "SELECT DISTINCT source FROM discovery_candidates ORDER BY source"
+            ).fetchall()]
+        except Exception:
+            all_sources = []
+
+        # -- build filtered query --
+        where_clauses: list[str] = []
+        params: list = []
+
+        if status:
+            where_clauses.append("status = ?")
+            params.append(status)
+        if city:
+            where_clauses.append("LOWER(city) = LOWER(?)")
+            params.append(city)
+        if source:
+            where_clauses.append("source = ?")
+            params.append(source)
+        if q:
+            where_clauses.append("LOWER(name) LIKE LOWER(?)")
+            params.append(f"%{q}%")
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        PER_PAGE = 50
+        try:
+            filtered_total = conn.execute(
+                f"SELECT COUNT(*) FROM discovery_candidates{where_sql}", params
+            ).fetchone()[0]
+        except Exception:
+            filtered_total = 0
+
+        total_pages = max(1, (filtered_total + PER_PAGE - 1) // PER_PAGE)
+        page = min(page, total_pages)
+        offset = (page - 1) * PER_PAGE
+
+        try:
+            candidates = conn.execute(
+                f"""SELECT id, name, website, city, source, status, score,
+                           reject_reason, ats_verified, website_domain, processed_at
+                    FROM discovery_candidates{where_sql}
+                    ORDER BY
+                        CASE status WHEN 'new' THEN 0 WHEN 'processed' THEN 1 ELSE 2 END,
+                        score DESC,
+                        name ASC
+                    LIMIT ? OFFSET ?""",
+                params + [PER_PAGE, offset],
+            ).fetchall()
+        except Exception:
+            candidates = []
+
+    # -- helper: pagination urls --
+    def page_url(p):
+        parts = []
+        if status:
+            parts.append(f"status={escape(status)}")
+        if city:
+            parts.append(f"city={escape(city)}")
+        if source:
+            parts.append(f"source={escape(source)}")
+        if q:
+            parts.append(f"q={escape(q)}")
+        parts.append(f"page={p}")
+        return "/ui/candidates?" + "&amp;".join(parts)
+
+    pagination_html = ""
+    if total_pages > 1:
+        parts = []
+        if page > 1:
+            parts.append(f'<a class="pg-btn" href="{page_url(page - 1)}">&#8592;</a>')
+        for p in range(1, total_pages + 1):
+            if p == page:
+                parts.append(f'<span class="pg-btn active">{p}</span>')
+            elif abs(p - page) <= 2 or p == 1 or p == total_pages:
+                parts.append(f'<a class="pg-btn" href="{page_url(p)}">{p}</a>')
+            elif abs(p - page) == 3:
+                parts.append('<span class="pg-dots">...</span>')
+        if page < total_pages:
+            parts.append(f'<a class="pg-btn" href="{page_url(page + 1)}">&#8594;</a>')
+        pagination_html = f'<div class="pagination">{"".join(parts)}</div>'
+
+    # -- dropdown helpers --
+    sel = lambda val, cur: "selected" if val == cur else ""  # noqa: E731
+    active_cls = lambda val: "active-filter" if status == val else ""  # noqa: E731
+
+    city_options = "".join(
+        f'<option value="{escape(c)}" {sel(c, city)}>{escape(c)}</option>'
+        for c in all_cities
+    )
+    source_options = "".join(
+        f'<option value="{escape(s)}" {sel(s, source)}>{escape(SOURCE_LABELS.get(s, s))}</option>'
+        for s in all_sources
+    )
+
+    # -- table rows --
+    rows_html = ""
+    for c in candidates:
+        name_esc = escape(c["name"])
+        city_esc = escape(c["city"] or "")
+        src_label = SOURCE_LABELS.get(c["source"], escape(c["source"]))
+        st = c["status"]
+        st_cls = f"status-{st}"
+        status_pill = f'<span class="status-pill {st_cls}">{escape(st.title())}</span>'
+
+        website = c["website"] or ""
+        domain = c["website_domain"] or ""
+        if website:
+            website_html = f'<a class="website-link" href="{escape(website)}" target="_blank" rel="noopener">{escape(domain or website[:40])}</a>'
+        else:
+            website_html = '<span style="color:#d1d5db">--</span>'
+
+        score_val = c["score"]
+        score_html = str(score_val) if score_val is not None else '<span style="color:#d1d5db">--</span>'
+
+        reject = escape(c["reject_reason"] or "") if st == "rejected" else ""
+        if reject:
+            short = reject[:40] + ("..." if len(reject) > 40 else "")
+            reject_html = f'<span style="font-size:12px;color:#6b7280" title="{reject}">{short}</span>'
+        else:
+            reject_html = '<span style="color:#d1d5db">--</span>'
+
+        rows_html += (
+            f"<tr>"
+            f"<td style='font-weight:500'>{name_esc}</td>"
+            f"<td>{city_esc}</td>"
+            f"<td><span class='source-badge'>{src_label}</span></td>"
+            f"<td>{status_pill}</td>"
+            f"<td>{website_html}</td>"
+            f"<td style='text-align:center'>{score_html}</td>"
+            f"<td>{reject_html}</td>"
+            f"</tr>"
+        )
+
+    if not rows_html:
+        rows_html = '<tr><td colspan="7" style="color:#9ca3af;text-align:center;padding:30px">No candidates found matching your filters</td></tr>'
+
+    html = f"""<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8"/><title>Discovery Candidates - HireAssist</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sora:wght@600;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: 'Inter', sans-serif; background: #f9fafb; color: #111827; font-size: 14px; line-height: 1.5; }}
+    a {{ text-decoration: none; }}
+    .topbar {{ background: #fff; border-bottom: 1px solid #e5e7eb; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }}
+    .logo {{ font-size: 18px; font-weight: 700; color: #0d9488; letter-spacing: -0.4px; }}
+    .logo-by {{ font-size: 13px; color: #6b7280; font-weight: 500; margin-left: 10px; display: inline-flex; align-items: center; gap: 5px; }}
+    .logo-by svg {{ vertical-align: middle; }}
+    .cubea-text {{ font-family: 'Sora', sans-serif; font-weight: 600; letter-spacing: -0.3px; }}
+    .nav-right {{ display: flex; align-items: center; gap: 24px; }}
+    .nav-right a {{ color: #4b5563; font-size: 13px; font-weight: 500; transition: color 0.15s; }}
+    .nav-right a:hover {{ color: #0d9488; }}
+    .nav-right a.active {{ color: #0d9488; font-weight: 600; }}
+    .alpha-bar {{ background: #fefce8; border-bottom: 1px solid #fde68a; text-align: center; padding: 9px 32px; font-size: 13px; color: #92400e; }}
+    .container {{ max-width: 1200px; margin: 24px auto; padding: 0 32px; }}
+    h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 20px; letter-spacing: -0.3px; }}
+
+    .stat-cards {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }}
+    .stat-card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); transition: border-color 0.15s; }}
+    .stat-card a {{ text-decoration: none; color: inherit; display: block; }}
+    .stat-card:hover {{ border-color: #0d9488; }}
+    .stat-card.active-filter {{ border-color: #0d9488; border-width: 2px; }}
+    .stat-card .label {{ font-size: 12px; color: #9ca3af; font-weight: 500; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }}
+    .stat-card .value {{ font-size: 28px; font-weight: 700; color: #111827; letter-spacing: -0.5px; }}
+    .stat-card .value.teal {{ color: #0d9488; }}
+
+    .filter-bar {{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; align-items: center; }}
+    .filter-bar select, .filter-bar input[type="text"] {{
+      border: 1px solid #e5e7eb; border-radius: 6px; padding: 7px 10px;
+      font-family: 'Inter', sans-serif; font-size: 13px; color: #111827; outline: none; background: #fff;
+    }}
+    .filter-bar select:focus, .filter-bar input:focus {{ border-color: #0d9488; }}
+    .filter-bar .search-input {{ min-width: 200px; }}
+    .filter-bar .btn-search {{ background: #0d9488; color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }}
+    .filter-bar .btn-search:hover {{ background: #0f766e; }}
+    .filter-bar .btn-clear {{ color: #6b7280; font-size: 12px; font-weight: 500; }}
+    .filter-bar .btn-clear:hover {{ color: #0d9488; }}
+
+    .card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); overflow-x: auto; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th {{ text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1px solid #e5e7eb; background: #fafafa; }}
+    td {{ padding: 9px 14px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }}
+    tr:last-child td {{ border-bottom: none; }}
+    tr:hover {{ background: #f9fafb; }}
+
+    .status-pill {{ display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; }}
+    .status-new {{ background: #dbeafe; color: #1d4ed8; }}
+    .status-processed {{ background: #d1fae5; color: #065f46; }}
+    .status-rejected {{ background: #fee2e2; color: #991b1b; }}
+    .source-badge {{ font-size: 11px; color: #6b7280; font-weight: 500; }}
+    .website-link {{ color: #0d9488; font-size: 12px; }}
+    .website-link:hover {{ text-decoration: underline; }}
+
+    .pagination {{ display: flex; justify-content: center; gap: 4px; margin-top: 20px; margin-bottom: 20px; }}
+    .pg-btn {{ display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 36px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #4b5563; background: #fff; border: 1px solid #e5e7eb; cursor: pointer; text-decoration: none; }}
+    .pg-btn:hover {{ background: #f3f4f6; }}
+    .pg-btn.active {{ background: #0d9488; color: #fff; border-color: #0d9488; }}
+    .pg-dots {{ padding: 0 4px; color: #9ca3af; align-self: center; }}
+
+    .results-meta {{ margin-bottom: 12px; font-size: 13px; color: #6b7280; }}
+
+    @media (max-width: 768px) {{
+      .topbar {{ padding: 0 16px; }}
+      .container {{ padding: 0 16px; }}
+      .stat-cards {{ grid-template-columns: repeat(2, 1fr); gap: 10px; }}
+      .filter-bar {{ flex-direction: column; }}
+      .filter-bar select, .filter-bar input[type="text"] {{ width: 100%; }}
+    }}
+  </style>
+</head><body>
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="logo">HireAssist</span>
+      <span class="logo-by">by <a href="https://cubea.nl/" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none"><svg width="20" height="20" viewBox="0 0 70 70" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M35 8 L62 22 L35 36 L8 22 Z" fill="#99f6e4"/><path d="M8 22 L35 36 L35 64 L8 50 Z" fill="#0d9488"/><path d="M35 36 L62 22 L62 50 L35 64 Z" fill="#14b8a6"/></svg> <span class="cubea-text">Cube <span style="color:#0d9488;font-weight:800">A</span></span></a></span>
+    </div>
+    <div class="nav-right">
+      <a href="/ui">Jobs</a>
+      <a href="/ui/candidates" class="active">Candidates</a>
+      <a href="/ui/momentum">Momentum</a>
+      <a href="/ui/report">Report</a>
+    </div>
+  </div>
+  <div class="alpha-bar">Alpha -- coverage may be incomplete. Please share feedback.</div>
+
+  <div class="container">
+    <h1>Discovery Candidates</h1>
+
+    <div class="stat-cards">
+      <div class="stat-card {active_cls(None)}"><a href="/ui/candidates">
+        <div class="label">Total</div><div class="value">{total:,}</div>
+      </a></div>
+      <div class="stat-card {active_cls('new')}"><a href="/ui/candidates?status=new">
+        <div class="label">New</div><div class="value teal">{new_count:,}</div>
+      </a></div>
+      <div class="stat-card {active_cls('processed')}"><a href="/ui/candidates?status=processed">
+        <div class="label">Processed</div><div class="value">{processed_count:,}</div>
+      </a></div>
+      <div class="stat-card {active_cls('rejected')}"><a href="/ui/candidates?status=rejected">
+        <div class="label">Rejected</div><div class="value">{rejected_count:,}</div>
+      </a></div>
+    </div>
+
+    <form method="get" action="/ui/candidates" class="filter-bar">
+      <input type="text" name="q" class="search-input" placeholder="Search by name..." value="{escape(q or '')}">
+      <select name="status" onchange="this.form.submit()">
+        <option value="">All statuses</option>
+        <option value="new" {sel('new', status)}>New</option>
+        <option value="processed" {sel('processed', status)}>Processed</option>
+        <option value="rejected" {sel('rejected', status)}>Rejected</option>
+      </select>
+      <select name="city" onchange="this.form.submit()">
+        <option value="">All cities</option>
+        {city_options}
+      </select>
+      <select name="source" onchange="this.form.submit()">
+        <option value="">All sources</option>
+        {source_options}
+      </select>
+      <button type="submit" class="btn-search">Search</button>
+      <a href="/ui/candidates" class="btn-clear">Clear filters</a>
+    </form>
+
+    <div class="results-meta">
+      Showing {filtered_total:,} candidates (page {page} of {total_pages})
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>City</th>
+            <th>Source</th>
+            <th>Status</th>
+            <th>Website</th>
+            <th>Score</th>
+            <th>Reject Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows_html}
+        </tbody>
+      </table>
+    </div>
+
+    {pagination_html}
+  </div>
+</body></html>"""
+
     return HTMLResponse(html)
 
 
@@ -2465,7 +2798,7 @@ def ui(
   </div>
   <div class="nav-right">
     <a href="/ui" class="active">Jobs</a>
-    <a href="#" style="color:var(--text-light);cursor:default">Companies</a>
+    <a href="/ui/candidates">Candidates</a>
     <a href="/ui/momentum">Momentum</a>
     <a href="/ui/report">Report</a>
     <a href="#" style="color:var(--text-light);cursor:default">For Employers</a>
@@ -2478,7 +2811,7 @@ def ui(
 
 <div class="mobile-nav" id="mobileNav">
   <a href="/ui" class="active">Jobs</a>
-  <a href="#">Companies</a>
+  <a href="/ui/candidates">Candidates</a>
   <a href="/ui/momentum">Momentum</a>
   <a href="/ui/report">Report</a>
   <a href="#">For Employers</a>

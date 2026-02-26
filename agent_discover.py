@@ -724,6 +724,7 @@ def run(
     require_website: bool = False,
     strict_ats: bool = True,
     skip_ats: bool = False,
+    broad_kvk: bool = False,
 ):
     logger = setup_logging()
     tag = "[DRY RUN] " if dry_run else ""
@@ -755,7 +756,7 @@ def run(
     elif source == "google":
         raw = discover_google(region)
     elif source == "kvk":
-        raw = discover_kvk(region)
+        raw = discover_kvk(region, broad=broad_kvk)
     else:
         logger.error(f"Unknown source '{source}'. Use 'osm', 'google', or 'kvk'.")
         conn.close()
@@ -1036,6 +1037,10 @@ if __name__ == "__main__":
         "--reverse-ats", action="store_true",
         help="Run ATS reverse discovery (probe seed token list for NL companies)",
     )
+    parser.add_argument(
+        "--broad-kvk", action="store_true",
+        help="KVK broad sweep: A-Z + B.V. + 0-9 to find ALL companies (not just keyword matches)",
+    )
     # Deprecated
     parser.add_argument("--max-rounds", type=int, default=None, help=argparse.SUPPRESS)
 
@@ -1060,4 +1065,5 @@ if __name__ == "__main__":
         require_website=args.require_website,
         strict_ats=args.strict_ats,
         skip_ats=args.skip_ats,
+        broad_kvk=args.broad_kvk,
     )
