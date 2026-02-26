@@ -44,6 +44,7 @@ except ImportError:
 
 from osm_discover import discover_osm
 from google_discover import discover_google
+from kvk_discover import discover_kvk
 from candidate_filter import score_candidate, is_candidate_eligible
 from db_config import get_db_path
 
@@ -753,8 +754,10 @@ def run(
         raw = discover_osm(region, limit=limit * 3)
     elif source == "google":
         raw = discover_google(region)
+    elif source == "kvk":
+        raw = discover_kvk(region)
     else:
-        logger.error(f"Unknown source '{source}'. Use 'osm' or 'google'.")
+        logger.error(f"Unknown source '{source}'. Use 'osm', 'google', or 'kvk'.")
         conn.close()
         return
 
@@ -989,8 +992,8 @@ if __name__ == "__main__":
         help="Region to search (e.g. Eindhoven, Noord-Brabant, Netherlands)",
     )
     parser.add_argument(
-        "--source", type=str, default="osm", choices=["osm", "google"],
-        help="Discovery source: osm (free) or google (Places API, needs key)",
+        "--source", type=str, default="osm", choices=["osm", "google", "kvk"],
+        help="Discovery source: osm (free), google (Places API), or kvk (KVK Zoeken API)",
     )
     parser.add_argument(
         "--limit", type=int, default=200,
