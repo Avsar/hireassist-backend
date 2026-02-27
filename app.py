@@ -1255,6 +1255,36 @@ def api_unsubscribe_alert(token: str = Query(...)):
                        success=False)
 
 
+@app.get("/api/alerts/smtp-test")
+def api_smtp_test():
+    """Temporary diagnostic: test SMTP connectivity from this server."""
+    import smtplib, socket
+    host = os.environ.get("SMTP_HOST", "")
+    port = int(os.environ.get("SMTP_PORT", "465"))
+    user = os.environ.get("SMTP_USER", "")
+    password = os.environ.get("SMTP_PASS", "")
+    result = {"host": host, "port": port, "user": user, "pass_set": bool(password)}
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=10) as srv:
+                srv.login(user, password)
+                result["status"] = "ok"
+                result["message"] = "SMTP_SSL connection and login succeeded"
+        else:
+            with smtplib.SMTP(host, port, timeout=10) as srv:
+                srv.starttls()
+                srv.login(user, password)
+                result["status"] = "ok"
+                result["message"] = "SMTP+STARTTLS connection and login succeeded"
+    except socket.timeout:
+        result["status"] = "error"
+        result["message"] = f"Connection timed out to {host}:{port} (port likely blocked)"
+    except Exception as e:
+        result["status"] = "error"
+        result["message"] = f"{type(e).__name__}: {e}"
+    return JSONResponse(result)
+
+
 def _alert_page(title: str, message: str, success: bool = True) -> str:
     """Render a minimal standalone HTML page for alert confirm/unsubscribe."""
     icon = "&#10003;" if success else "&#10007;"
