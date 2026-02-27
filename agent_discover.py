@@ -44,7 +44,7 @@ except ImportError:
 
 from osm_discover import discover_osm
 from google_discover import discover_google
-from kvk_discover import discover_kvk
+from kvk_discover import discover_kvk, enrich_with_basisprofiel
 from candidate_filter import score_candidate, is_candidate_eligible
 from db_config import get_db_path
 
@@ -500,7 +500,9 @@ def store_candidates(conn: sqlite3.Connection, candidates: list[dict]) -> int:
                ON CONFLICT(source, osm_id) DO UPDATE SET
                    last_seen_at=excluded.last_seen_at,
                    score=excluded.score,
-                   website_domain=excluded.website_domain""",
+                   website=COALESCE(excluded.website, discovery_candidates.website),
+                   website_domain=COALESCE(excluded.website_domain, discovery_candidates.website_domain),
+                   raw_json=excluded.raw_json""",
             (
                 c["name"],
                 c.get("website"),
@@ -724,7 +726,6 @@ def run(
     require_website: bool = False,
     strict_ats: bool = True,
     skip_ats: bool = False,
-    broad_kvk: bool = False,
 ):
     logger = setup_logging()
     tag = "[DRY RUN] " if dry_run else ""
@@ -756,7 +757,7 @@ def run(
     elif source == "google":
         raw = discover_google(region)
     elif source == "kvk":
-        raw = discover_kvk(region, broad=broad_kvk)
+        raw = discover_kvk(region)
     else:
         logger.error(f"Unknown source '{source}'. Use 'osm', 'google', or 'kvk'.")
         conn.close()
@@ -807,6 +808,35 @@ def run(
         logger.info("Nothing new to process. Try a different region or wait for OSM updates.")
         conn.close()
         return
+
+    # ---- Step 4b: Enrich KVK candidates with websites via Basisprofiel API ----
+    kvk_to_enrich = [
+        c for c in unprocessed
+        if c.get("source") == "kvk" and not c.get("website")
+    ]
+    if kvk_to_enrich:
+        # Parse raw_json strings from DB into dicts for enrichment
+        for c in kvk_to_enrich:
+            if isinstance(c.get("raw_json"), str):
+                c["raw_json"] = json.loads(c["raw_json"])
+        enriched = enrich_with_basisprofiel(kvk_to_enrich)
+        if enriched:
+            # Update DB with newly found websites
+            for c in kvk_to_enrich:
+                if c.get("website"):
+                    domain = normalize_domain(c["website"])
+                    conn.execute(
+                        """UPDATE discovery_candidates
+                           SET website=?, website_domain=?
+                           WHERE id=?""",
+                        (c["website"], domain, c["id"]),
+                    )
+            conn.commit()
+
+    # Ensure raw_json is parsed for all unprocessed candidates
+    for c in unprocessed:
+        if isinstance(c.get("raw_json"), str):
+            c["raw_json"] = json.loads(c["raw_json"])
 
     # ---- Step 5: Optional AI cleanup (on filtered, smaller batch) ----
     if use_ai:
@@ -1037,10 +1067,6 @@ if __name__ == "__main__":
         "--reverse-ats", action="store_true",
         help="Run ATS reverse discovery (probe seed token list for NL companies)",
     )
-    parser.add_argument(
-        "--broad-kvk", action="store_true",
-        help="KVK broad sweep: A-Z + B.V. + 0-9 to find ALL companies (not just keyword matches)",
-    )
     # Deprecated
     parser.add_argument("--max-rounds", type=int, default=None, help=argparse.SUPPRESS)
 
@@ -1065,5 +1091,4 @@ if __name__ == "__main__":
         require_website=args.require_website,
         strict_ats=args.strict_ats,
         skip_ats=args.skip_ats,
-        broad_kvk=args.broad_kvk,
     )

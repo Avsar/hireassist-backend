@@ -6,23 +6,20 @@ for companies in a given city.  Returns candidates in the same format as
 google_discover.py / osm_discover.py so they can be fed into
 agent_discover.py's pipeline.
 
-Two modes:
-  - keyword mode (default): searches for tech-related keywords in company names
-  - broad mode (--broad):   sweeps A-Z + "B.V." to find ALL companies regardless
-                            of name, then lets candidate_filter score them
+After discovery, enrich_with_basisprofiel() can fetch registered websites,
+SBI codes, and employee counts from the KVK Basisprofiel API.
 
 Requires KVK_API_KEY in .env.
 
 Usage (standalone test):
     python kvk_discover.py --city Eindhoven
-    python kvk_discover.py --city Eindhoven --broad
+    python kvk_discover.py --city Eindhoven --enrich
     python kvk_discover.py --city Eindhoven --queries "software,IT,tech"
 """
 
 import argparse
 import logging
 import os
-import string
 import time
 
 import requests
@@ -35,7 +32,8 @@ except ImportError:
 
 logger = logging.getLogger("kvk_discover")
 
-API_URL = "https://api.kvk.nl/api/v2/zoeken"
+ZOEKEN_URL = "https://api.kvk.nl/api/v2/zoeken"
+BASISPROFIEL_URL = "https://api.kvk.nl/api/v1/basisprofielen"
 
 # Search terms to discover companies across all industries.
 # KVK API does whole-word matching, so include both short and full forms.
@@ -78,33 +76,12 @@ DEFAULT_QUERIES = [
 # KVK API hard limit: max 10 pages x 100 results = 1,000 per query
 MAX_API_PAGES = 10
 
-# Letters that overflow 1,000 results when searched alone -- need two-letter drilldown
-_OVERFLOW_LETTERS = {"B", "O", "V"}
-
-
-def _build_broad_queries() -> list[str]:
-    """Build broad sweep query list: single letters + two-letter drilldown for overflow letters."""
-    queries = []
-    for letter in string.ascii_uppercase:
-        if letter in _OVERFLOW_LETTERS:
-            # Drill down to two-letter combos (skip BV -- matches everything via "B.V.")
-            for second in string.ascii_uppercase:
-                combo = letter + second
-                if combo == "BV":
-                    continue  # "BV" matches all B.V. companies, caught by other queries
-                queries.append(combo)
-        else:
-            queries.append(letter)
-    # Also add digits 0-9
-    queries.extend(str(d) for d in range(10))
-    return queries
-
 
 def _search(api_key: str, naam: str, plaats: str,
             page: int = 1, per_page: int = 100) -> dict:
     """Run a single KVK Zoeken request."""
     resp = requests.get(
-        API_URL,
+        ZOEKEN_URL,
         params={
             "naam": naam,
             "plaats": plaats,
@@ -154,7 +131,7 @@ def _fetch_query(api_key: str, query: str, city: str, max_pages: int,
 
             candidates.append({
                 "name": name,
-                "website": None,  # KVK doesn't return websites
+                "website": None,  # filled by enrich_with_basisprofiel()
                 "city": plaats or city,
                 "region": city,
                 "source": "kvk",
@@ -177,20 +154,96 @@ def _fetch_query(api_key: str, query: str, city: str, max_pages: int,
     return added
 
 
+# ---------------------------------------------------------------------------
+# Basisprofiel enrichment
+# ---------------------------------------------------------------------------
+
+def enrich_with_basisprofiel(candidates: list[dict]) -> int:
+    """
+    Enrich KVK candidates with website, SBI codes, and employee count
+    from the KVK Basisprofiel API.
+
+    Modifies candidates in-place.  Returns number of candidates enriched
+    with a website.
+    """
+    api_key = os.environ.get("KVK_API_KEY", "")
+    if not api_key:
+        logger.error("KVK_API_KEY not set -- skipping enrichment")
+        return 0
+
+    to_enrich = [
+        c for c in candidates
+        if not c.get("website") and c.get("raw_json", {}).get("kvk_nummer")
+    ]
+    if not to_enrich:
+        return 0
+
+    logger.info("Enriching %d KVK candidates via Basisprofiel API...", len(to_enrich))
+    enriched = 0
+
+    for i, cand in enumerate(to_enrich, 1):
+        kvk_nr = cand["raw_json"]["kvk_nummer"]
+        try:
+            resp = requests.get(
+                f"{BASISPROFIEL_URL}/{kvk_nr}",
+                headers={"apikey": api_key},
+                timeout=15,
+            )
+            if resp.status_code == 404:
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as e:
+            logger.debug("  Basisprofiel error for KVK %s: %s", kvk_nr, e)
+            continue
+
+        # Extract website from hoofdvestiging
+        hv = data.get("_embedded", {}).get("hoofdvestiging", {})
+        websites = hv.get("websites", []) if hv else []
+        if websites:
+            cand["website"] = websites[0]
+            enriched += 1
+
+        # Extract SBI codes
+        sbi = data.get("sbiActiviteiten", [])
+        if sbi:
+            cand["raw_json"]["sbi"] = [
+                {"code": s.get("sbiCode", ""), "desc": s.get("sbiOmschrijving", "")}
+                for s in sbi
+            ]
+
+        # Extract employee count
+        emp = data.get("totaalWerkzamePersonen")
+        if emp is not None:
+            cand["raw_json"]["employees"] = emp
+
+        if i % 100 == 0:
+            logger.info("  Enriched %d/%d candidates (%d websites found)",
+                        i, len(to_enrich), enriched)
+
+        time.sleep(0.3)  # rate limit
+
+    logger.info("Enrichment done: %d/%d candidates got websites",
+                enriched, len(to_enrich))
+    return enriched
+
+
+# ---------------------------------------------------------------------------
+# Main discovery function
+# ---------------------------------------------------------------------------
+
 def discover_kvk(
     city: str,
     queries: list[str] | None = None,
     max_pages: int = 3,
-    broad: bool = False,
 ) -> list[dict]:
     """
     Discover companies in a city using the KVK Zoeken API.
 
     Args:
         city: City name to search in
-        queries: Custom keyword list (keyword mode only)
-        max_pages: Max pages per query (keyword mode, default 3)
-        broad: If True, do a broad A-Z + B.V. sweep (max 10 pages each)
+        queries: Custom keyword list (overrides DEFAULT_QUERIES)
+        max_pages: Max pages per query (default 3, max 10)
 
     Returns list of dicts compatible with agent_discover.py's candidate format:
         {name, website, city, region, source, osm_id, raw_json}
@@ -203,16 +256,8 @@ def discover_kvk(
     seen_kvk: set[str] = set()
     candidates: list[dict] = []
 
-    if broad:
-        # Broad sweep: single letters + two-letter drilldown for overflow letters
-        sweep_queries = _build_broad_queries()
-        pages_per_query = MAX_API_PAGES
-        logger.info("KVK broad sweep: %d queries x up to %d pages for %s",
-                     len(sweep_queries), pages_per_query, city)
-    else:
-        # Keyword mode (original behavior)
-        sweep_queries = queries if queries is not None else DEFAULT_QUERIES
-        pages_per_query = max_pages
+    sweep_queries = queries if queries is not None else DEFAULT_QUERIES
+    pages_per_query = min(max_pages, MAX_API_PAGES)
 
     for i, query in enumerate(sweep_queries, 1):
         logger.info("  [%d/%d] KVK query: naam='%s' plaats='%s'",
@@ -234,26 +279,34 @@ def discover_kvk(
 # CLI
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    import io
+    import sys
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     parser = argparse.ArgumentParser(description="KVK company discovery")
     parser.add_argument("--city", required=True, help="City to search in")
     parser.add_argument("--queries", help="Comma-separated search terms (keyword mode)")
     parser.add_argument("--max-pages", type=int, default=3, help="Max pages per query (default: 3)")
-    parser.add_argument("--broad", action="store_true",
-                        help="Broad sweep: A-Z + B.V. + 0-9 to find ALL companies")
+    parser.add_argument("--enrich", action="store_true",
+                        help="Enrich candidates with websites via Basisprofiel API")
     args = parser.parse_args()
 
     queries = None
     if args.queries:
         queries = [q.strip() for q in args.queries.split(",")]
 
-    results = discover_kvk(args.city, queries=queries, max_pages=args.max_pages,
-                           broad=args.broad)
+    results = discover_kvk(args.city, queries=queries, max_pages=args.max_pages)
+
+    if args.enrich:
+        enrich_with_basisprofiel(results)
 
     print(f"\n{'='*70}")
     print(f"Found {len(results)} unique companies in {args.city}")
+    with_web = sum(1 for c in results if c.get("website"))
+    print(f"  {with_web} with websites")
     print(f"{'='*70}")
     for i, c in enumerate(results, 1):
         kvk = c["raw_json"].get("kvk_nummer", "")
-        print(f"  {i:>3}. {c['name']:<50} KVK {kvk}")
+        web = c.get("website") or ""
+        print(f"  {i:>3}. {c['name']:<45} KVK {kvk}  {web}")

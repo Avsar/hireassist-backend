@@ -112,7 +112,7 @@ _CORPORATE_INDICATORS = re.compile(
 
 def score_candidate(candidate: dict) -> int:
     """
-    Score an OSM candidate from roughly -100 to +100.
+    Score a discovery candidate from roughly -100 to +100.
 
     Higher = more likely to be a real company worth probing.
     Uses OSM tags + name heuristics.  Deterministic and fast.
@@ -120,6 +120,10 @@ def score_candidate(candidate: dict) -> int:
     score = 0
     tags = candidate.get("osm_tags", {})
     name = candidate.get("name", "")
+
+    # ---- Source bonus (KVK = verified business registry) ----
+    if candidate.get("source") == "kvk":
+        score += 10
 
     # ---- Tag-based scoring ----
     for key, val_re, points in _EXCLUDE_TAGS:
