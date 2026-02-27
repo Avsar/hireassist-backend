@@ -15,6 +15,7 @@ import re
 import secrets
 import smtplib
 import sqlite3
+import threading
 from datetime import date, datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -77,12 +78,14 @@ def create_alert(email: str, filters_json: str) -> dict:
     conn.commit()
     conn.close()
 
-    # Send confirmation email (non-blocking on failure)
-    try:
-        send_confirmation_email(email, token)
-    except Exception as e:
-        logger.error("Failed to send confirmation email to %s: %s", email, e)
-        return {"ok": True, "message": "Alert saved but we could not send the confirmation email. Please try again later."}
+    # Send confirmation email in background thread so the API responds immediately
+    def _send():
+        try:
+            send_confirmation_email(email, token)
+        except Exception as e:
+            logger.error("Failed to send confirmation email to %s: %s", email, e)
+
+    threading.Thread(target=_send, daemon=True).start()
 
     return {"ok": True, "message": "Check your email to confirm your alert."}
 
@@ -148,7 +151,7 @@ def _send_email(to: str, subject: str, html_body: str):
     msg.attach(MIMEText(plain, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    with smtplib.SMTP(host, port) as server:
+    with smtplib.SMTP(host, port, timeout=15) as server:
         server.starttls()
         server.login(user, password)
         server.sendmail(from_addr, [to], msg.as_string())
