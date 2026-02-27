@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Query, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form, Query, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 import requests
@@ -1208,6 +1208,79 @@ def stats_alerts():
         job_intel.ensure_intel_tables(conn)
         alerts = job_intel.detect_alerts(conn)
     return {"alerts": alerts, "count": len(alerts)}
+
+
+# ----------------------------
+# Job alert subscriptions
+# ----------------------------
+import job_alerts as _job_alerts
+
+
+@app.post("/api/alerts")
+def api_create_alert(
+    email: str = Form(...),
+    filters_json: str = Form("{}"),
+):
+    """Create a new job alert subscription (sends confirmation email)."""
+    result = _job_alerts.create_alert(email, filters_json)
+    status = 200 if result["ok"] else 400
+    return JSONResponse(result, status_code=status)
+
+
+@app.get("/api/alerts/confirm", response_class=HTMLResponse)
+def api_confirm_alert(token: str = Query(...)):
+    """Confirm an alert subscription via email link."""
+    email = _job_alerts.confirm_alert(token)
+    if email:
+        return _alert_page("Alert confirmed",
+                           f"Your job alert for <strong>{escape(email)}</strong> is now active. "
+                           "You'll receive a daily email when new jobs match your filters.",
+                           success=True)
+    return _alert_page("Invalid link",
+                       "This confirmation link is invalid or has expired.",
+                       success=False)
+
+
+@app.get("/api/alerts/unsubscribe", response_class=HTMLResponse)
+def api_unsubscribe_alert(token: str = Query(...)):
+    """Unsubscribe from a job alert via email link."""
+    email = _job_alerts.unsubscribe_alert(token)
+    if email:
+        return _alert_page("Unsubscribed",
+                           f"<strong>{escape(email)}</strong> has been unsubscribed. "
+                           "You won't receive any more alerts.",
+                           success=True)
+    return _alert_page("Invalid link",
+                       "This unsubscribe link is invalid or has already been used.",
+                       success=False)
+
+
+def _alert_page(title: str, message: str, success: bool = True) -> str:
+    """Render a minimal standalone HTML page for alert confirm/unsubscribe."""
+    icon = "&#10003;" if success else "&#10007;"
+    color = "#0d9488" if success else "#dc2626"
+    return f"""\
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} - HireAssist</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex;
+         align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; }}
+  .card {{ background: white; border-radius: 12px; padding: 40px; max-width: 420px; text-align: center;
+           box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
+  .icon {{ font-size: 48px; color: {color}; margin-bottom: 16px; }}
+  h1 {{ font-size: 20px; color: #0f172a; margin: 0 0 12px; }}
+  p {{ font-size: 14px; color: #64748b; line-height: 1.6; margin: 0 0 24px; }}
+  a {{ display: inline-block; background: #0d9488; color: white; padding: 10px 24px; border-radius: 8px;
+       text-decoration: none; font-weight: 600; font-size: 14px; }}
+  a:hover {{ background: #0f766e; }}
+</style></head><body>
+<div class="card">
+  <div class="icon">{icon}</div>
+  <h1>{title}</h1>
+  <p>{message}</p>
+  <a href="/ui">Back to HireAssist</a>
+</div></body></html>"""
 
 
 # ----------------------------
@@ -2454,6 +2527,28 @@ def ui(
     .btn-alert {{ background: var(--primary); color: white; border: none; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; white-space: nowrap; transition: background 0.15s; flex-shrink: 0; }}
     .btn-alert:hover {{ background: #0f766e; }}
 
+    /* ALERT MODAL */
+    .alert-modal {{ position:fixed; top:0; left:0; right:0; bottom:0; z-index:1000; display:flex; align-items:center; justify-content:center; }}
+    .alert-modal-backdrop {{ position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); }}
+    .alert-modal-card {{ position:relative; background:white; border-radius:12px; width:90%; max-width:440px; box-shadow:0 8px 30px rgba(0,0,0,0.15); overflow:hidden; }}
+    .alert-modal-header {{ display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); }}
+    .alert-modal-title {{ font-size:16px; font-weight:700; color:var(--text); }}
+    .alert-modal-close {{ background:none; border:none; font-size:22px; color:var(--text-light); cursor:pointer; padding:4px 8px; line-height:1; }}
+    .alert-modal-close:hover {{ color:var(--text); }}
+    .alert-modal-body {{ padding:20px; }}
+    .alert-modal-desc {{ font-size:13px; color:var(--text-mid); margin-bottom:14px; }}
+    .alert-filters-preview {{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; }}
+    .alert-filter-pill {{ background:#f0fdfa; border:1px solid #99f6e4; border-radius:20px; padding:4px 12px; font-size:12px; color:#0d9488; }}
+    .alert-input-row {{ display:flex; gap:8px; }}
+    .alert-email-input {{ flex:1; padding:10px 14px; border:1px solid var(--border); border-radius:8px; font-size:14px; font-family:'Inter',sans-serif; outline:none; }}
+    .alert-email-input:focus {{ border-color:var(--primary); box-shadow:0 0 0 3px rgba(13,148,136,0.1); }}
+    .alert-submit-btn {{ background:var(--primary); color:white; border:none; padding:10px 20px; border-radius:8px; font-size:13px; font-weight:600; font-family:'Inter',sans-serif; cursor:pointer; white-space:nowrap; }}
+    .alert-submit-btn:hover {{ background:#0f766e; }}
+    .alert-submit-btn:disabled {{ opacity:0.6; cursor:not-allowed; }}
+    .alert-msg {{ margin-top:12px; font-size:13px; padding:10px; border-radius:6px; }}
+    .alert-msg.success {{ background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }}
+    .alert-msg.error {{ background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }}
+
     /* JOB CARD */
     .job-card {{ background: white; border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow); cursor: default; transition: border-color 0.15s, box-shadow 0.15s; position: relative; }}
     .job-card:hover {{ border-color: var(--border); box-shadow: var(--shadow-md); }}
@@ -3078,7 +3173,7 @@ def ui(
       <div class="alert-text">
         <span>Get notified when new hidden jobs match your search</span>
       </div>
-      <button class="btn-alert" onclick="return false">Set Job Alert</button>
+      <button class="btn-alert" id="btnSetAlert">Set Job Alert</button>
     </div>
 
     <div class="jobs-header">
@@ -3494,6 +3589,129 @@ function onCityChange(sel) {{
   }}
   sel.form.submit();
 }}
+</script>
+
+<!-- ALERT MODAL -->
+<div id="alertModal" class="alert-modal" style="display:none">
+  <div class="alert-modal-backdrop"></div>
+  <div class="alert-modal-card">
+    <div class="alert-modal-header">
+      <div class="alert-modal-title">Set Job Alert</div>
+      <button class="alert-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="alert-modal-body">
+      <p class="alert-modal-desc">Get a daily email when new jobs match your current filters.</p>
+      <div id="alertFiltersPreview" class="alert-filters-preview"></div>
+      <div class="alert-input-row">
+        <input type="email" id="alertEmail" class="alert-email-input" placeholder="your@email.com">
+        <button id="alertSubmitBtn" class="alert-submit-btn">Subscribe</button>
+      </div>
+      <div id="alertMessage" class="alert-msg" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {{
+  var modal = document.getElementById('alertModal');
+  var emailInput = document.getElementById('alertEmail');
+  var submitBtn = document.getElementById('alertSubmitBtn');
+  var msgDiv = document.getElementById('alertMessage');
+  var filtersPreview = document.getElementById('alertFiltersPreview');
+
+  function getCurrentFilters() {{
+    var f = {{}};
+    var el;
+    el = document.querySelector('input[name="q"]'); if (el) f.q = el.value || '';
+    el = document.querySelector('select[name="company"]'); if (el) f.company = el.value || '';
+    el = document.getElementById('citySelect'); if (el) f.city = el.value || '';
+    el = document.querySelector('select[name="country"]'); if (el) f.country = el.value || '';
+    el = document.querySelector('select[name="tech"]'); if (el) f.tech = el.value || '';
+    el = document.querySelector('select[name="lang"]'); if (el) f.lang = el.value || '';
+    el = document.querySelector('input[name="english_only"]'); if (el) f.english_only = el.checked;
+    el = document.querySelector('input[name="hide_stale"]'); if (el) f.hide_stale = el.checked;
+    return f;
+  }}
+
+  function renderPills(filters) {{
+    filtersPreview.innerHTML = '';
+    var labels = {{q:'Keyword', company:'Company', city:'City', country:'Country', tech:'Tech', lang:'Language', english_only:'English only', hide_stale:'Hide stale'}};
+    for (var k in filters) {{
+      var v = filters[k];
+      if (!v || v === '' || v === false) continue;
+      if (k === 'country' && v.toLowerCase() === 'netherlands') continue;
+      var text = labels[k] || k;
+      if (typeof v === 'string' && v) text = text + ': ' + v;
+      var pill = document.createElement('span');
+      pill.className = 'alert-filter-pill';
+      pill.textContent = text;
+      filtersPreview.appendChild(pill);
+    }}
+    if (!filtersPreview.children.length) {{
+      var pill = document.createElement('span');
+      pill.className = 'alert-filter-pill';
+      pill.textContent = 'All jobs in Netherlands';
+      filtersPreview.appendChild(pill);
+    }}
+  }}
+
+  document.getElementById('btnSetAlert').addEventListener('click', function(e) {{
+    e.preventDefault();
+    renderPills(getCurrentFilters());
+    modal.style.display = 'flex';
+    msgDiv.style.display = 'none';
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Subscribe';
+    emailInput.value = '';
+    emailInput.focus();
+  }});
+
+  modal.querySelector('.alert-modal-close').addEventListener('click', function() {{ modal.style.display = 'none'; }});
+  modal.querySelector('.alert-modal-backdrop').addEventListener('click', function() {{ modal.style.display = 'none'; }});
+
+  emailInput.addEventListener('keydown', function(e) {{
+    if (e.key === 'Enter') {{ e.preventDefault(); submitBtn.click(); }}
+  }});
+
+  submitBtn.addEventListener('click', function() {{
+    var email = emailInput.value.trim();
+    if (!email || email.indexOf('@') < 1) {{
+      showMsg('Please enter a valid email address.', 'error');
+      return;
+    }}
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving...';
+
+    var filters = getCurrentFilters();
+    var fd = new FormData();
+    fd.append('email', email);
+    fd.append('filters_json', JSON.stringify(filters));
+
+    fetch('/api/alerts', {{ method: 'POST', body: fd }})
+      .then(function(r) {{ return r.json(); }})
+      .then(function(data) {{
+        if (data.ok) {{
+          showMsg('Check your inbox at ' + email + ' to confirm your alert.', 'success');
+          emailInput.value = '';
+        }} else {{
+          showMsg(data.message || 'Something went wrong.', 'error');
+        }}
+      }})
+      .catch(function() {{
+        showMsg('Network error. Please try again.', 'error');
+      }})
+      .finally(function() {{
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Subscribe';
+      }});
+  }});
+
+  function showMsg(text, type) {{
+    msgDiv.textContent = text;
+    msgDiv.className = 'alert-msg ' + type;
+    msgDiv.style.display = 'block';
+  }}
+}})();
 </script>
 </body>
 </html>"""

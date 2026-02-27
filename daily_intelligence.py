@@ -220,6 +220,7 @@ def main():
     parser.add_argument("--stats-only", action="store_true", help="Only recompute stats")
     parser.add_argument("--skip-push", action="store_true", help="Skip Render push")
     parser.add_argument("--skip-git", action="store_true", help="Skip git commit+push of bundle")
+    parser.add_argument("--skip-alerts", action="store_true", help="Skip job alert digest emails")
     parser.add_argument("--region", default="Netherlands", help="Region for discovery (default: Netherlands)")
     args = parser.parse_args()
 
@@ -276,6 +277,25 @@ def main():
         results["push"] = ok
     elif args.skip_push:
         print("\n  Skipping Render push (--skip-push)")
+
+    # Step 6.5: Send job alert digest emails
+    if not args.skip_alerts:
+        print(f"\n{'=' * 60}")
+        print(f"  STEP: Send job alert digests")
+        print(f"{'=' * 60}\n")
+        try:
+            from job_alerts import send_daily_digests
+            alert_stats = send_daily_digests()
+            print(f"  Alerts checked:  {alert_stats['alerts_checked']}")
+            print(f"  Emails sent:     {alert_stats['emails_sent']}")
+            print(f"  Jobs matched:    {alert_stats['total_jobs_matched']}")
+            print(f"\n  [OK] Alert digests complete")
+            results["alerts"] = True
+        except Exception as e:
+            print(f"  [FAILED] Alert digests: {e}")
+            results["alerts"] = False
+    elif args.skip_alerts:
+        print("\n  Skipping alert digests (--skip-alerts)")
 
     # Step 7: Git push bundle (ensures Render cold starts get latest data)
     if not args.skip_git and bundle_path:
