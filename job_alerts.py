@@ -121,7 +121,7 @@ def unsubscribe_alert(token: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# SMTP
+# Email sending (Resend HTTP API preferred, SMTP fallback)
 # ---------------------------------------------------------------------------
 
 def _get_base_url() -> str:
@@ -131,7 +131,38 @@ def _get_base_url() -> str:
 
 
 def _send_email(to: str, subject: str, html_body: str):
-    """Send an HTML email via SMTP."""
+    """Send an HTML email. Uses Resend API if configured, else SMTP."""
+    resend_key = os.environ.get("RESEND_API_KEY", "")
+    if resend_key:
+        _send_via_resend(to, subject, html_body, resend_key)
+    else:
+        _send_via_smtp(to, subject, html_body)
+
+
+def _send_via_resend(to: str, subject: str, html_body: str, api_key: str):
+    """Send email via Resend HTTP API (works on Railway/cloud platforms)."""
+    import requests as _requests
+
+    from_addr = os.environ.get("SMTP_FROM", "success@cubea.nl")
+    resp = _requests.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "from": f"HireAssist <{from_addr}>",
+            "to": [to],
+            "subject": subject,
+            "html": html_body,
+        },
+        timeout=15,
+    )
+    if resp.status_code >= 400:
+        logger.error("Resend API error %d: %s", resp.status_code, resp.text)
+        raise RuntimeError(f"Resend API error {resp.status_code}: {resp.text}")
+    logger.info("Email sent via Resend to %s: %s", to, subject)
+
+
+def _send_via_smtp(to: str, subject: str, html_body: str):
+    """Send email via SMTP (works locally, blocked on most cloud platforms)."""
     host = os.environ.get("SMTP_HOST", "")
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER", "")
@@ -139,7 +170,7 @@ def _send_email(to: str, subject: str, html_body: str):
     from_addr = os.environ.get("SMTP_FROM", user)
 
     if not host or not user or not password:
-        logger.warning("SMTP not configured -- skipping email to %s", to)
+        logger.warning("No email provider configured -- skipping email to %s", to)
         return
 
     msg = MIMEMultipart("alternative")
@@ -161,7 +192,7 @@ def _send_email(to: str, subject: str, html_body: str):
             server.login(user, password)
             server.sendmail(from_addr, [to], msg.as_string())
 
-    logger.info("Email sent to %s: %s", to, subject)
+    logger.info("Email sent via SMTP to %s: %s", to, subject)
 
 
 # ---------------------------------------------------------------------------

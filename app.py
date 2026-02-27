@@ -1257,31 +1257,46 @@ def api_unsubscribe_alert(token: str = Query(...)):
 
 @app.get("/api/alerts/smtp-test")
 def api_smtp_test():
-    """Temporary diagnostic: test SMTP connectivity from this server."""
-    import smtplib, socket
-    host = os.environ.get("SMTP_HOST", "")
-    port = int(os.environ.get("SMTP_PORT", "465"))
-    user = os.environ.get("SMTP_USER", "")
-    password = os.environ.get("SMTP_PASS", "")
-    result = {"host": host, "port": port, "user": user, "pass_set": bool(password)}
-    try:
-        if port == 465:
-            with smtplib.SMTP_SSL(host, port, timeout=10) as srv:
-                srv.login(user, password)
-                result["status"] = "ok"
-                result["message"] = "SMTP_SSL connection and login succeeded"
-        else:
-            with smtplib.SMTP(host, port, timeout=10) as srv:
-                srv.starttls()
-                srv.login(user, password)
-                result["status"] = "ok"
-                result["message"] = "SMTP+STARTTLS connection and login succeeded"
-    except socket.timeout:
-        result["status"] = "error"
-        result["message"] = f"Connection timed out to {host}:{port} (port likely blocked)"
-    except Exception as e:
-        result["status"] = "error"
-        result["message"] = f"{type(e).__name__}: {e}"
+    """Temporary diagnostic: test email connectivity from this server."""
+    result = {}
+    resend_key = os.environ.get("RESEND_API_KEY", "")
+    if resend_key:
+        result["provider"] = "resend"
+        result["key_set"] = True
+        try:
+            import requests as _req
+            resp = _req.get("https://api.resend.com/domains",
+                            headers={"Authorization": f"Bearer {resend_key}"},
+                            timeout=10)
+            result["status"] = "ok" if resp.status_code == 200 else "error"
+            result["message"] = f"Resend API responded {resp.status_code}"
+            result["details"] = resp.json() if resp.status_code == 200 else resp.text
+        except Exception as e:
+            result["status"] = "error"
+            result["message"] = f"{type(e).__name__}: {e}"
+    else:
+        import smtplib, socket
+        host = os.environ.get("SMTP_HOST", "")
+        port = int(os.environ.get("SMTP_PORT", "465"))
+        result["provider"] = "smtp"
+        result["host"] = host
+        result["port"] = port
+        try:
+            if port == 465:
+                with smtplib.SMTP_SSL(host, port, timeout=10) as srv:
+                    srv.login(os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASS", ""))
+                    result["status"] = "ok"
+            else:
+                with smtplib.SMTP(host, port, timeout=10) as srv:
+                    srv.starttls()
+                    srv.login(os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASS", ""))
+                    result["status"] = "ok"
+        except socket.timeout:
+            result["status"] = "error"
+            result["message"] = f"Connection timed out to {host}:{port} (port blocked)"
+        except Exception as e:
+            result["status"] = "error"
+            result["message"] = f"{type(e).__name__}: {e}"
     return JSONResponse(result)
 
 
