@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from db_config import get_db_path
 from html import escape
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlparse
 import re
@@ -1010,6 +1010,7 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
             "updated_at": r["posted_at"] or r["first_seen_at"] or "",
             "is_new_today": is_new_today(r["first_seen_at"] or ""),
             "is_stale": is_stale(r["first_seen_at"] or ""),
+            "tech_tags": (r["tech_tags"] if "tech_tags" in r.keys() else "") or "",
             "snippet": "",
         })
 
@@ -1957,6 +1958,7 @@ def ui(
     new_today_only: bool = Query(default=False),
     hide_stale: bool = Query(default=False),
     lang: str | None = Query(default=None),
+    tech: str | None = Query(default=None),
     sort: str = Query(default="newest"),
     page: int = Query(default=1, ge=1),
 ):
@@ -1985,6 +1987,13 @@ def ui(
         all_visible = [j for j in country_jobs
                        if not j.get("_placeholder")
                        and (not _city_filter or (j.get("city") or "").lower() == _city_filter.lower())]
+
+    # Tech stack filter
+    if tech:
+        tech_lower = tech.lower()
+        all_visible = [j for j in all_visible
+                       if tech_lower in (j.get("tech_tags") or "").lower().split("|")]
+
     # Sort
     if sort == "newest":
         all_visible.sort(key=lambda j: j.get("updated_at") or "", reverse=True)
@@ -2055,8 +2064,10 @@ def ui(
     )
     country_options = "".join(opt(c, country) for c in countries if c != "Netherlands")
 
-    # Build province-grouped city dropdown (NL) or flat list (other countries)
+    # Build province + city dropdowns (cascading for NL, flat for other countries)
     is_nl = (country or "").lower() in ("netherlands", "")
+    province_options = ""
+    province_cities_js = "{}"
     if is_nl and cities:
         province_cities = defaultdict(list)
         for c in cities:
@@ -2068,20 +2079,52 @@ def ui(
             "Gelderland", "Overijssel", "Limburg", "Groningen",
             "Friesland", "Flevoland", "Drenthe", "Zeeland",
         ]
-        city_options = ""
+        # Determine selected province
+        _selected_province = ""
+        if city and city.startswith("province:"):
+            _selected_province = city[len("province:"):]
+        elif city:
+            _selected_province = CITY_TO_PROVINCE.get(city.lower(), "")
+
+        # Province dropdown options
         for prov in prov_order:
             pcs = sorted(province_cities.get(prov, []))
             if pcs:
                 prov_val = f"province:{prov}"
-                prov_sel = "selected" if city == prov_val else ""
-                job_count = sum(1 for j in country_jobs if (j.get("city") or "").lower() in {c.lower() for c in pcs})
-                city_options += f'<option value="{escape(prov_val)}" {prov_sel} style="font-weight:700">{escape(prov)} ({job_count})</option>'
-                city_options += "".join(
-                    f'<option value="{escape(c)}" {"selected" if c == city else ""}>&nbsp;&nbsp;&nbsp;{escape(c)}</option>'
-                    for c in pcs
-                )
+                prov_sel = "selected" if _selected_province == prov else ""
+                prov_cities_set = {c.lower() for c in pcs}
+                job_count = sum(1 for j in country_jobs if (j.get("city") or "").lower() in prov_cities_set)
+                province_options += f'<option value="{escape(prov_val)}" {prov_sel}>{escape(prov)} ({job_count})</option>'
+
+        # City dropdown options -- flat list with data-province attribute
+        city_options = ""
+        for prov in prov_order:
+            pcs = sorted(province_cities.get(prov, []))
+            for c in pcs:
+                sel = "selected" if c == city else ""
+                city_options += f'<option value="{escape(c)}" data-province="{escape(prov)}" {sel}>{escape(c)}</option>'
+
+        # JS mapping for cascade behaviour
+        js_parts = []
+        for prov in prov_order:
+            pcs = sorted(province_cities.get(prov, []))
+            if pcs:
+                cities_json = ",".join(f'"{c}"' for c in pcs)
+                js_parts.append(f'"{prov}":[{cities_json}]')
+        province_cities_js = "{" + ",".join(js_parts) + "}"
     else:
         city_options = "".join(opt(c, city) for c in cities)
+
+    # Tech stack dropdown options (top 20 tags from visible jobs)
+    _tag_counts = Counter()
+    for j in all_visible:
+        for t in (j.get("tech_tags") or "").split("|"):
+            if t:
+                _tag_counts[t] += 1
+    tech_options = ""
+    for tag_name, tag_cnt in _tag_counts.most_common(20):
+        sel = "selected" if tag_name == tech else ""
+        tech_options += f'<option value="{escape(tag_name)}" {sel}>{escape(tag_name)} ({tag_cnt})</option>'
 
     def render_card(j):
         apply_url = escape(j.get("apply_url") or "")
@@ -2129,6 +2172,10 @@ def ui(
         via = SOURCE_NAMES.get(j.get("source", ""), "")
         if via:
             tags += f'<span class="pill pill-source">via {escape(via)}</span>'
+        # Tech stack pills (max 4)
+        _tech_list = [t for t in (j.get("tech_tags") or "").split("|") if t]
+        for _tt in _tech_list[:4]:
+            tags += f'<span class="pill pill-tech">{escape(_tt)}</span>'
 
         return (
             f'<div class="job-card{new_class}">'
@@ -2162,6 +2209,7 @@ def ui(
     if new_today_only: _base.append("new_today_only=true")
     if hide_stale: _base.append("hide_stale=true")
     if lang: _base.append(f"lang={escape(lang)}")
+    if tech: _base.append(f"tech={escape(tech)}")
     sort_base_params = "&amp;".join(_base) if _base else "country=Netherlands"
 
     # Build pagination controls
@@ -2175,6 +2223,7 @@ def ui(
         if new_today_only: params.append("new_today_only=true")
         if hide_stale: params.append("hide_stale=true")
         if lang: params.append(f"lang={escape(lang)}")
+        if tech: params.append(f"tech={escape(tech)}")
         if sort != "newest": params.append(f"sort={escape(sort)}")
         params.append(f"page={p}")
         return "/ui?" + "&amp;".join(params)
@@ -2337,6 +2386,7 @@ def ui(
     .pill-new {{ background: var(--green-light); color: var(--green); border-color: #a7f3d0; }}
     .pill-stale {{ background: #fef3c7; color: #92400e; border-color: #fde68a; }}
     .pill-source {{ background: var(--tag-bg); color: var(--text-light); border-color: var(--border); }}
+    .pill-tech {{ background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }}
     .actions-right {{ display: flex; align-items: center; gap: 8px; flex-shrink: 0; }}
     .btn-save {{ background: white; border: 1px solid var(--border); color: var(--text-mid); padding: 6px 14px; border-radius: 6px; font-size: 12px; font-family: 'Inter', sans-serif; font-weight: 500; cursor: pointer; transition: all 0.15s; }}
     .btn-save:hover {{ border-color: var(--primary); color: var(--primary); }}
@@ -2898,7 +2948,12 @@ def ui(
             {company_options}
           </select>
 
-          <select name="city" class="filter-select" onchange="this.form.submit()">
+          <select id="provinceSelect" class="filter-select" onchange="onProvinceChange(this)">
+            <option value="">All provinces</option>
+            {province_options}
+          </select>
+
+          <select name="city" id="citySelect" class="filter-select" onchange="onCityChange(this)">
             <option value="">All cities</option>
             {city_options}
           </select>
@@ -2907,6 +2962,11 @@ def ui(
             <option value="Netherlands" {"selected" if country == "Netherlands" else ""}>Netherlands</option>
             <option value="" {"selected" if not country else ""}>All countries</option>
             {country_options}
+          </select>
+
+          <select name="tech" class="filter-select full" onchange="this.form.submit()">
+            <option value="">All tech stacks</option>
+            {tech_options}
           </select>
         </div>
         <div class="chk-row">
@@ -3224,6 +3284,9 @@ def ui(
     if (answers.lang) {{
       params.push('lang=' + encodeURIComponent(answers.lang));
     }}
+    if (answers.tech && answers.tech.length > 0) {{
+      params.push('tech=' + encodeURIComponent(answers.tech[0]));
+    }}
     var url = '/ui' + (params.length > 0 ? '?' + params.join('&') : '');
 
     addMessage("Here are your personalized results. Taking you there now!", 'bot');
@@ -3265,6 +3328,82 @@ document.getElementById('mobileFilterToggle').addEventListener('click', function
     el.classList.toggle('mobile-open');
   }});
 }});
+</script>
+
+<script>
+// Province -> City cascade filter
+var provinceCitiesMap = {province_cities_js};
+var allCityOptions = [];
+(function() {{
+  var citySelect = document.getElementById('citySelect');
+  if (!citySelect) return;
+  var opts = citySelect.querySelectorAll('option');
+  for (var i = 1; i < opts.length; i++) {{
+    allCityOptions.push(opts[i].cloneNode(true));
+  }}
+  // On-load: if province selected, filter city dropdown
+  var provSelect = document.getElementById('provinceSelect');
+  if (provSelect && provSelect.value && provSelect.value.indexOf('province:') === 0) {{
+    var provName = provSelect.value.substring(9);
+    var cities = provinceCitiesMap[provName] || [];
+    var currentCity = citySelect.value;
+    citySelect.innerHTML = '<option value="">All cities</option>';
+    cities.forEach(function(c) {{
+      var o = document.createElement('option');
+      o.value = c;
+      o.textContent = c;
+      if (c === currentCity) o.selected = true;
+      citySelect.appendChild(o);
+    }});
+  }}
+}})();
+
+function onProvinceChange(sel) {{
+  var citySelect = document.getElementById('citySelect');
+  var prov = sel.value;
+  citySelect.innerHTML = '<option value="">All cities</option>';
+  if (prov && prov.indexOf('province:') === 0) {{
+    var provName = prov.substring(9);
+    var cities = provinceCitiesMap[provName] || [];
+    cities.forEach(function(c) {{
+      var o = document.createElement('option');
+      o.value = c;
+      o.textContent = c;
+      citySelect.appendChild(o);
+    }});
+    // Submit with province filter
+    citySelect.value = '';
+    // Set city to province:X for backend
+    var provOpt = document.createElement('option');
+    provOpt.value = prov;
+    provOpt.textContent = 'All ' + provName;
+    provOpt.selected = true;
+    citySelect.insertBefore(provOpt, citySelect.options[1]);
+    citySelect.value = prov;
+  }} else {{
+    allCityOptions.forEach(function(o) {{
+      citySelect.appendChild(o.cloneNode(true));
+    }});
+  }}
+  citySelect.form.submit();
+}}
+
+function onCityChange(sel) {{
+  var city = sel.value;
+  if (city && city.indexOf('province:') !== 0) {{
+    var provSelect = document.getElementById('provinceSelect');
+    if (provSelect) {{
+      for (var prov in provinceCitiesMap) {{
+        var found = provinceCitiesMap[prov].some(function(c) {{ return c.toLowerCase() === city.toLowerCase(); }});
+        if (found) {{
+          provSelect.value = 'province:' + prov;
+          break;
+        }}
+      }}
+    }}
+  }}
+  sel.form.submit();
+}}
 </script>
 </body>
 </html>"""

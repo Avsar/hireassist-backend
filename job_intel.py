@@ -72,7 +72,7 @@ def ensure_intel_tables(conn: sqlite3.Connection):
     """)
 
     # Migration: add department + job_type columns (idempotent)
-    for col, col_def in [("department", "TEXT DEFAULT ''"), ("job_type", "TEXT DEFAULT ''")]:
+    for col, col_def in [("department", "TEXT DEFAULT ''"), ("job_type", "TEXT DEFAULT ''"), ("tech_tags", "TEXT DEFAULT ''")]:
         try:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_def}")
         except sqlite3.OperationalError:
@@ -87,6 +87,18 @@ def ensure_intel_tables(conn: sqlite3.Connection):
         ON jobs(city, is_active)
     """)
     conn.commit()
+
+    # One-time backfill: extract tech_tags for existing jobs
+    backfill_needed = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE is_active=1 AND title != '' AND (tech_tags IS NULL OR tech_tags = '')"
+    ).fetchone()[0]
+    if backfill_needed > 100:  # only run if significant number needs backfill
+        rows = conn.execute("SELECT id, title FROM jobs WHERE tech_tags IS NULL OR tech_tags = ''").fetchall()
+        for row_id, title in rows:
+            tags = extract_tech_tags(title)
+            if tags:
+                conn.execute("UPDATE jobs SET tech_tags = ? WHERE id = ?", (tags, row_id))
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +185,95 @@ def infer_department(title: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# B2) Title-based tech stack extraction
+# ---------------------------------------------------------------------------
+
+# (display_name, [patterns that match in lowercase padded title])
+_TECH_RULES = [
+    # Languages
+    ("Python",       [" python "," python,", " python/", " python."]),
+    ("JavaScript",   ["javascript"]),
+    ("TypeScript",   ["typescript"]),
+    ("Java",         [" java ", " java,", " java/", "java developer", "java engineer",
+                      "java software", "java backend", "senior java", "lead java",
+                      "junior java", "medior java"]),
+    ("C#",           [" c# ", " c#,", ".net developer", ".net engineer", "dotnet"]),
+    ("C++",          ["c++", " cpp "]),
+    ("Go",           [" go ", " go,", " go/", "golang"]),
+    ("Rust",         [" rust ", " rust,", " rust/"]),
+    ("Kotlin",       ["kotlin"]),
+    ("Scala",        [" scala ", " scala,"]),
+    ("Ruby",         [" ruby ", " ruby,"]),
+    ("PHP",          [" php ", " php,", " php/"]),
+    ("Swift",        [" swift ", " swift,"]),
+    # Frontend
+    ("React",        ["react"]),
+    ("Vue",          ["vue.js", "vuejs", " vue ", " vue,"]),
+    ("Angular",      ["angular"]),
+    ("Next.js",      ["next.js", "nextjs"]),
+    ("Svelte",       ["svelte"]),
+    # Backend / Frameworks
+    ("Node.js",      ["node.js", "nodejs"]),
+    ("Django",       ["django"]),
+    ("FastAPI",      ["fastapi"]),
+    ("Spring",       ["spring boot", " spring "]),
+    (".NET",         [" .net ", " .net,", "dotnet", "asp.net"]),
+    ("Laravel",      ["laravel"]),
+    ("Rails",        [" rails ", "ruby on rails"]),
+    # Data
+    ("SQL",          [" sql ", " sql,", " sql/"]),
+    ("PostgreSQL",   ["postgresql", "postgres"]),
+    ("MongoDB",      ["mongodb", "mongo "]),
+    ("Redis",        ["redis"]),
+    ("Elasticsearch", ["elasticsearch"]),
+    ("Kafka",        ["kafka"]),
+    ("Spark",        [" spark ", " spark,", "apache spark"]),
+    ("Snowflake",    ["snowflake"]),
+    ("Databricks",   ["databricks"]),
+    # Cloud / DevOps
+    ("AWS",          [" aws ", " aws,", " aws/", "amazon web services"]),
+    ("Azure",        ["azure"]),
+    ("GCP",          [" gcp ", "google cloud"]),
+    ("Docker",       ["docker"]),
+    ("Kubernetes",   ["kubernetes", " k8s "]),
+    ("Terraform",    ["terraform"]),
+    ("CI/CD",        ["ci/cd", " cicd "]),
+    # Other
+    ("GraphQL",      ["graphql"]),
+    ("Machine Learning", ["machine learning"]),
+    ("AI",           [" ai ", " ai,", " ai/", "artificial intelligence",
+                      "generative ai", " genai ", "llm "]),
+    ("DevOps",       ["devops"]),
+    ("SAP",          [" sap ", " sap,", " sap/"]),
+    ("Salesforce",   ["salesforce"]),
+    ("Power BI",     ["power bi", "powerbi"]),
+    ("Tableau",      ["tableau"]),
+]
+
+
+def extract_tech_tags(title: str) -> str:
+    """Extract tech stack tags from job title. Returns pipe-delimited string or ''."""
+    if not title:
+        return ""
+    # Normalize: replace common delimiters with spaces, then pad
+    t = title.lower()
+    for ch in "()[]{}|/\\&":
+        t = t.replace(ch, " ")
+    t = f" {t} "  # pad for boundary matching
+    tags = []
+    seen: set[str] = set()
+    for display_name, patterns in _TECH_RULES:
+        if display_name in seen:
+            continue
+        for pat in patterns:
+            if pat in t:
+                tags.append(display_name)
+                seen.add(display_name)
+                break
+    return "|".join(tags)
+
+
+# ---------------------------------------------------------------------------
 # C) Stable dedupe key per source
 # ---------------------------------------------------------------------------
 
@@ -236,6 +337,7 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
         if not department:
             department = infer_department(title)
         job_type = jd.get("job_type") or ""
+        tech_tags = jd.get("tech_tags") or extract_tech_tags(title)
 
         existing = conn.execute(
             "SELECT id, is_active FROM jobs WHERE source=? AND job_key=?",
@@ -246,12 +348,12 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
             conn.execute(
                 """UPDATE jobs SET
                     title=?, location_raw=?, country=?, city=?, url=?,
-                    department=?, job_type=?,
+                    department=?, job_type=?, tech_tags=?,
                     posted_at=COALESCE(?, posted_at),
                     last_seen_at=?, is_active=1
                 WHERE source=? AND job_key=?""",
                 (title, location_raw, country, city, url,
-                 department, job_type,
+                 department, job_type, tech_tags,
                  posted_at, now, source, job_key),
             )
             stats["updated"] += 1
@@ -259,11 +361,11 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
             conn.execute(
                 """INSERT INTO jobs
                     (source, company_name, job_key, title, location_raw, country, city,
-                     url, department, job_type,
+                     url, department, job_type, tech_tags,
                      posted_at, first_seen_at, last_seen_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (source, company_name, job_key, title, location_raw, country, city,
-                 url, department, job_type,
+                 url, department, job_type, tech_tags,
                  posted_at, now, now),
             )
             stats["new"] += 1
