@@ -151,10 +151,15 @@ def _send_email(to: str, subject: str, html_body: str):
     msg.attach(MIMEText(plain, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    with smtplib.SMTP(host, port, timeout=15) as server:
-        server.starttls()
-        server.login(user, password)
-        server.sendmail(from_addr, [to], msg.as_string())
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            server.login(user, password)
+            server.sendmail(from_addr, [to], msg.as_string())
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.starttls()
+            server.login(user, password)
+            server.sendmail(from_addr, [to], msg.as_string())
 
     logger.info("Email sent to %s: %s", to, subject)
 
