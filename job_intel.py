@@ -536,3 +536,128 @@ def get_summary_stats(conn: sqlite3.Connection, days: int = 7) -> dict:
         "total_new_jobs": row["total_new_jobs"] or 0,
         "total_closed_jobs": row["total_closed_jobs"] or 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# G.  Smart Alerts – hiring surges, slowdowns, new entrants, gone dark
+# ---------------------------------------------------------------------------
+
+def _detect_surges(conn, min_active: int) -> list[dict]:
+    rows = conn.execute("""
+        WITH latest AS (SELECT MAX(stat_date) as d FROM company_daily_stats),
+        today AS (
+            SELECT company_name,
+                   SUM(new_jobs) as today_new,
+                   SUM(active_jobs) as today_active
+            FROM company_daily_stats, latest
+            WHERE stat_date = latest.d
+            GROUP BY company_name
+            HAVING today_active >= ? AND today_new >= 3
+        ),
+        baseline AS (
+            SELECT company_name, AVG(day_new) as avg_new_7d
+            FROM (
+                SELECT company_name, stat_date, SUM(new_jobs) as day_new
+                FROM company_daily_stats, latest
+                WHERE stat_date >= date(latest.d, '-7 days') AND stat_date < latest.d
+                GROUP BY company_name, stat_date
+            ) GROUP BY company_name
+        )
+        SELECT t.company_name, t.today_new, t.today_active,
+               COALESCE(b.avg_new_7d, 0) as avg_new_7d
+        FROM today t LEFT JOIN baseline b ON t.company_name = b.company_name
+        WHERE t.today_new >= 3
+          AND (b.avg_new_7d IS NULL OR b.avg_new_7d < 1 OR t.today_new >= b.avg_new_7d * 3)
+        ORDER BY t.today_new DESC LIMIT 10
+    """, (min_active,)).fetchall()
+    return [{
+        "type": "surge", "headline": "Hiring Surge",
+        "company_name": r[0],
+        "detail": f"+{r[1]} new today (avg {r[3]:.0f})",
+        "active_jobs": r[2],
+        "severity": "high" if r[1] >= 10 else "medium",
+    } for r in rows]
+
+
+def _detect_slowdowns(conn, min_active: int) -> list[dict]:
+    rows = conn.execute("""
+        WITH latest AS (SELECT MAX(stat_date) as d FROM company_daily_stats),
+        recent AS (
+            SELECT company_name, SUM(total_net) as net_3d, MAX(total_active) as current_active
+            FROM (
+                SELECT company_name, stat_date,
+                       SUM(net_change) as total_net, SUM(active_jobs) as total_active
+                FROM company_daily_stats, latest
+                WHERE stat_date >= date(latest.d, '-2 days')
+                GROUP BY company_name, stat_date
+            ) GROUP BY company_name
+            HAVING current_active >= ?
+        )
+        SELECT company_name, net_3d, current_active FROM recent
+        WHERE net_3d <= -5 AND ABS(net_3d) >= current_active * 0.05
+        ORDER BY net_3d ASC LIMIT 10
+    """, (min_active,)).fetchall()
+    return [{
+        "type": "slowdown", "headline": "Hiring Slowdown",
+        "company_name": r[0],
+        "detail": f"{r[1]:+d} net (3d), {r[2]} active",
+        "active_jobs": r[2],
+        "severity": "high" if abs(r[1]) >= r[2] * 0.1 else "medium",
+    } for r in rows]
+
+
+def _detect_new_entrants(conn, min_active: int) -> list[dict]:
+    rows = conn.execute("""
+        WITH latest AS (SELECT MAX(stat_date) as d FROM company_daily_stats)
+        SELECT company_name, MIN(stat_date) as first_seen, MAX(active_jobs) as active_jobs
+        FROM company_daily_stats, latest
+        GROUP BY company_name
+        HAVING first_seen >= date(latest.d, '-2 days') AND active_jobs >= ?
+        ORDER BY active_jobs DESC LIMIT 10
+    """, (min_active,)).fetchall()
+    return [{
+        "type": "new_entrant", "headline": "New Entrant",
+        "company_name": r[0],
+        "detail": f"{r[2]} jobs, first seen {r[1]}",
+        "active_jobs": r[2],
+        "severity": "medium",
+    } for r in rows]
+
+
+def _detect_gone_dark(conn, min_active: int) -> list[dict]:
+    rows = conn.execute("""
+        WITH latest AS (SELECT MAX(stat_date) as d FROM company_daily_stats),
+        prev AS (
+            SELECT company_name, MAX(active_jobs) as peak_active
+            FROM company_daily_stats, latest
+            WHERE stat_date < latest.d
+            GROUP BY company_name HAVING peak_active >= ?
+        ),
+        current AS (
+            SELECT company_name FROM company_daily_stats, latest
+            WHERE stat_date = latest.d AND active_jobs > 0
+        )
+        SELECT p.company_name, p.peak_active FROM prev p
+        WHERE p.company_name NOT IN (SELECT company_name FROM current)
+        ORDER BY p.peak_active DESC LIMIT 10
+    """, (min_active,)).fetchall()
+    return [{
+        "type": "gone_dark", "headline": "Gone Dark",
+        "company_name": r[0],
+        "detail": f"Was {r[1]} jobs, now 0",
+        "active_jobs": 0,
+        "severity": "high",
+    } for r in rows]
+
+
+def detect_alerts(conn: sqlite3.Connection, min_active: int = 5) -> list[dict]:
+    """Detect hiring alerts from company_daily_stats. Returns list of alert dicts."""
+    seen: set[str] = set()
+    all_alerts: list[dict] = []
+    # Priority order: surge > gone_dark > slowdown > new_entrant
+    for fn in (_detect_surges, _detect_gone_dark, _detect_slowdowns, _detect_new_entrants):
+        for alert in fn(conn, min_active):
+            if alert["company_name"] not in seen:
+                seen.add(alert["company_name"])
+                all_alerts.append(alert)
+    return all_alerts

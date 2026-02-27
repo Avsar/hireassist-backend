@@ -1199,6 +1199,17 @@ def stats_summary(days: int = Query(default=7, ge=1, le=90)):
     return data
 
 
+@app.get("/stats/alerts")
+def stats_alerts():
+    """Smart hiring alerts detected from daily stats."""
+    if not _HAS_INTEL:
+        return {"error": "Intelligence layer not available"}
+    with sqlite3.connect(DB_FILE) as conn:
+        job_intel.ensure_intel_tables(conn)
+        alerts = job_intel.detect_alerts(conn)
+    return {"alerts": alerts, "count": len(alerts)}
+
+
 # ----------------------------
 # UI helpers
 # ----------------------------
@@ -1249,8 +1260,31 @@ def ui_momentum():
     with sqlite3.connect(DB_FILE) as conn:
         job_intel.ensure_intel_tables(conn)
         companies = job_intel.get_company_stats(conn)
+        alerts = job_intel.detect_alerts(conn)
 
     top20 = companies[:20]
+
+    # Build alerts HTML
+    alerts_html = ""
+    if alerts:
+        TYPE_COLORS = {"surge": "#0e9f6e", "slowdown": "#dc2626", "new_entrant": "#2563eb", "gone_dark": "#6b7280"}
+        cards = ""
+        for a in alerts:
+            color = TYPE_COLORS.get(a["type"], "#6b7280")
+            cards += (
+                f'<div class="alert-card" style="border-left:3px solid {color}">'
+                f'<div class="alert-type" style="color:{color}">{escape(a["headline"])}</div>'
+                f'<div class="alert-company"><a href="/stats/company/{escape(a["company_name"])}">{escape(a["company_name"])}</a></div>'
+                f'<div class="alert-detail">{escape(a["detail"])}</div>'
+                f'<div class="alert-jobs">{a["active_jobs"]} active jobs</div>'
+                f'</div>'
+            )
+        alerts_html = (
+            f'<div class="alerts-section">'
+            f'<div class="alerts-title">Smart Alerts <span class="alerts-count">{len(alerts)}</span></div>'
+            f'<div class="alerts-grid">{cards}</div>'
+            f'</div>'
+        )
 
     rows_html = ""
     for i, c in enumerate(top20, 1):
@@ -1303,6 +1337,16 @@ def ui_momentum():
     .positive {{ color: #0e9f6e; font-weight: 600; }}
     .negative {{ color: #c00; font-weight: 600; }}
     .empty {{ text-align: center; padding: 40px; color: #9ca3af; }}
+    .alerts-section {{ margin-bottom: 24px; }}
+    .alerts-title {{ font-size: 13px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }}
+    .alerts-count {{ background: #0e9f6e; color: white; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px; }}
+    .alerts-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }}
+    .alert-card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+    .alert-type {{ font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }}
+    .alert-company {{ font-size: 14px; font-weight: 600; color: #111827; margin-bottom: 2px; }}
+    .alert-company a {{ color: #0d9488; }}
+    .alert-detail {{ font-size: 12px; color: #6b7280; }}
+    .alert-jobs {{ font-size: 11px; color: #9ca3af; margin-top: 4px; }}
   </style>
 </head><body>
   <div class="topbar">
@@ -1320,6 +1364,7 @@ def ui_momentum():
   <div class="alpha-bar">Alpha -- coverage may be incomplete. Please share feedback.</div>
   <div class="container">
     <h1>Company Momentum (Top 20)</h1>
+    {alerts_html}
     {table_html}
   </div>
 </body></html>"""
@@ -2048,6 +2093,43 @@ def ui(
         except Exception:
             pass
 
+    # Smart alerts for sidebar (compact, max 3)
+    sidebar_alerts_html = ""
+    if _HAS_INTEL:
+        try:
+            with sqlite3.connect(DB_FILE) as conn:
+                job_intel.ensure_intel_tables(conn)
+                _alerts = job_intel.detect_alerts(conn)
+            top3 = _alerts[:3]
+            if top3:
+                TYPE_ICONS = {"surge": ">>", "slowdown": "vv", "new_entrant": "NEW", "gone_dark": "--"}
+                TYPE_COLORS = {"surge": "#0e9f6e", "slowdown": "#dc2626", "new_entrant": "#2563eb", "gone_dark": "#6b7280"}
+                a_items = ""
+                for a in top3:
+                    icon = TYPE_ICONS.get(a["type"], "?")
+                    color = TYPE_COLORS.get(a["type"], "#6b7280")
+                    short_detail = a["detail"][:25]
+                    a_items += (
+                        f'<div class="sa-item">'
+                        f'<div class="sa-icon" style="color:{color}">{icon}</div>'
+                        f'<div class="sa-name">{escape(a["company_name"])}</div>'
+                        f'<div class="sa-detail">{escape(short_detail)}</div>'
+                        f'</div>'
+                    )
+                sidebar_alerts_html = (
+                    '<div class="alerts-box">'
+                    '<div class="momentum-header">'
+                    '<div class="momentum-title-text">Smart Alerts <span class="momentum-badge">LIVE</span></div>'
+                    '</div>'
+                    '<div class="momentum-sub-text">Hiring signals this week</div>'
+                    f'{a_items}'
+                    '<div style="margin-top:12px;text-align:center">'
+                    '<a href="/ui/momentum" style="font-size:12px;color:#0d9488;font-weight:500;text-decoration:none">View all alerts &#8594;</a>'
+                    '</div></div>'
+                )
+        except Exception:
+            pass
+
     SOURCE_NAMES = {
         "greenhouse": "Greenhouse", "lever": "Lever",
         "smartrecruiters": "SmartRecruiters", "recruitee": "Recruitee",
@@ -2350,6 +2432,13 @@ def ui(
     .m-bar {{ height: 100%; background: var(--primary); border-radius: 2px; }}
     .m-delta {{ font-size: 11px; color: var(--green); font-weight: 600; min-width: 28px; text-align: right; }}
 
+    .alerts-box {{ background: white; border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: var(--shadow); margin-top: 12px; }}
+    .sa-item {{ display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }}
+    .sa-item:last-child {{ border-bottom: none; }}
+    .sa-icon {{ font-size: 10px; font-weight: 700; width: 28px; text-align: center; flex-shrink: 0; }}
+    .sa-name {{ flex: 1; font-size: 12px; color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .sa-detail {{ font-size: 11px; color: var(--text-light); min-width: 60px; text-align: right; white-space: nowrap; }}
+
     /* JOBS AREA */
     .jobs-area {{ display: flex; flex-direction: column; gap: 12px; }}
     .jobs-header {{ display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }}
@@ -2534,8 +2623,8 @@ def ui(
       }}
       .sidebar {{ position: static; gap: 0; }}
       .mobile-filter-toggle {{ display: flex; }}
-      .filter-box, .momentum-box {{ display: none; margin-bottom: 12px; }}
-      .filter-box.mobile-open, .momentum-box.mobile-open {{ display: block; }}
+      .filter-box, .momentum-box, .alerts-box {{ display: none; margin-bottom: 12px; }}
+      .filter-box.mobile-open, .momentum-box.mobile-open, .alerts-box.mobile-open {{ display: block; }}
 
       .alert-banner {{
         flex-direction: column;
@@ -2979,6 +3068,7 @@ def ui(
     </form>
 
     {momentum_html}
+    {sidebar_alerts_html}
   </div>
 
   <!-- JOBS -->
@@ -3324,7 +3414,7 @@ def ui(
 
 <script>
 document.getElementById('mobileFilterToggle').addEventListener('click', function() {{
-  document.querySelectorAll('.filter-box,.momentum-box').forEach(function(el) {{
+  document.querySelectorAll('.filter-box,.momentum-box,.alerts-box').forEach(function(el) {{
     el.classList.toggle('mobile-open');
   }});
 }});
