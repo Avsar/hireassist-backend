@@ -185,16 +185,17 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ---
 
-## Current Numbers (as of Feb 23, 2026)
+## Current Numbers (as of Mar 2, 2026)
 
-| Metric                          | Value |
-|---------------------------------|-------|
-| Total active companies in DB    | 593   |
-| ATS companies                   | ~530  |
-| Career page companies           | 55    |
-| Scraped jobs in DB              | 600   |
-| **Jobs in intel table**         | **7,622** |
-| **Company daily stats rows**    | ~400+ |
+| Metric                          | Value  |
+|---------------------------------|--------|
+| Total companies in DB           | 606    |
+| ATS companies                   | 287    |
+| Career page companies           | 319    |
+| Scraped jobs in DB              | 1,105  |
+| **Active jobs in intel table**  | **10,998** |
+| **Companies with active jobs**  | **372**    |
+| **Company daily stats rows**    | 2,138  |
 
 ---
 

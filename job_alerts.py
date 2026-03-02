@@ -143,7 +143,9 @@ def _send_via_resend(to: str, subject: str, html_body: str, api_key: str):
     """Send email via Resend HTTP API (works on Railway/cloud platforms)."""
     import requests as _requests
 
-    from_addr = os.environ.get("SMTP_FROM", "success@cubea.nl")
+    from_addr = os.environ.get("RESEND_FROM", "")
+    if not from_addr:
+        from_addr = os.environ.get("SMTP_FROM", "success@cubea.nl")
     resp = _requests.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -155,10 +157,11 @@ def _send_via_resend(to: str, subject: str, html_body: str, api_key: str):
         },
         timeout=15,
     )
+    resp_data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
     if resp.status_code >= 400:
         logger.error("Resend API error %d: %s", resp.status_code, resp.text)
         raise RuntimeError(f"Resend API error {resp.status_code}: {resp.text}")
-    logger.info("Email sent via Resend to %s: %s", to, subject)
+    logger.info("Email sent via Resend to %s: %s (id=%s)", to, subject, resp_data.get("id", "?"))
 
 
 def _send_via_smtp(to: str, subject: str, html_body: str):

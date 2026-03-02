@@ -922,6 +922,15 @@ def _process_one(
             verified, vreason = verify_ats_hit(
                 best, cname, domain, strict=strict_ats
             )
+            # SmartRecruiters returns 200 for almost any token with
+            # an empty postings list, causing massive false positives.
+            # Require at least 1 job for SR matches.
+            if (verified
+                    and best["source"] == "smartrecruiters"
+                    and best["jobs"] == 0):
+                verified = False
+                vreason = "sr_zero_jobs"
+
             if verified:
                 logger.info(
                     f"  + ATS verified: {best['source']}/{best['token']} "

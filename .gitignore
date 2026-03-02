@@ -20,8 +20,7 @@ data/exports/
 !data/seed/
 
 # Temp files
-tmp_jobs.json
-cUsersamitaSourceJobsNLprojecttmp_jobs.json
+tmp_*
 nul
 
 # Playwright browsers (installed via `playwright install`)
