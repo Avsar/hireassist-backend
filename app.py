@@ -872,17 +872,21 @@ def normalize_jobs(company_name: str, source: str, token: str):
         for j in sr_list_jobs(token):
             title = j.get("name", "") or ""
             loc_obj = j.get("location") or {}
+            sr_country_code = (loc_obj.get("country") or "").strip().lower()
             loc_raw = ", ".join([x for x in [loc_obj.get("city"), loc_obj.get("country")] if x]) or ""
             city, country = split_city_country(loc_raw)
-            ref = j.get("ref", "") or j.get("id", "")
+            # SR gives 2-letter country codes (nl, de, be, etc.)
+            if not country and sr_country_code:
+                country = "Netherlands" if sr_country_code == "nl" else sr_country_code.upper()
+            posting_id = j.get("id", "") or ""
             apply_url = ""
-            if ref:
-                apply_url = f"https://jobs.smartrecruiters.com/{token}/{ref}"
+            if posting_id:
+                apply_url = f"https://jobs.smartrecruiters.com/{token}/{posting_id}"
             jobs.append({
                 "company": company_name,
                 "source": source,
                 "token": token,
-                "id": ref,
+                "id": posting_id,
                 "title": title,
                 "department": (j.get("department") or {}).get("label", "") or "",
                 "job_type": (j.get("typeOfEmployment") or {}).get("label", "") or "",
