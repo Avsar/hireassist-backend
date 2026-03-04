@@ -1333,6 +1333,47 @@ def _alert_page(title: str, message: str, success: bool = True) -> str:
 
 
 # ----------------------------
+# AI Chat assistant
+# ----------------------------
+try:
+    import ai_assistant as _ai
+    _HAS_AI = True
+except ImportError:
+    _HAS_AI = False
+
+_chat_rate: dict[str, list[float]] = {}  # ip -> [timestamps]
+
+@app.post("/api/chat")
+async def api_chat(request: Request):
+    """AI job search assistant endpoint."""
+    import time
+
+    if not _HAS_AI:
+        return JSONResponse({"reply": "AI assistant not available.", "jobs": []}, status_code=503)
+
+    # Simple rate limit: 20 req/min per IP
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    timestamps = _chat_rate.setdefault(ip, [])
+    timestamps[:] = [t for t in timestamps if now - t < 60]
+    if len(timestamps) >= 20:
+        return JSONResponse({"reply": "Too many requests. Please wait a moment.", "jobs": []}, status_code=429)
+    timestamps.append(now)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"reply": "Invalid request.", "jobs": []}, status_code=400)
+
+    messages = body.get("messages", [])
+    if not messages:
+        return JSONResponse({"reply": "Please send a message.", "jobs": []}, status_code=400)
+
+    result = _ai.handle_chat(messages)
+    return JSONResponse(result)
+
+
+# ----------------------------
 # UI helpers
 # ----------------------------
 def time_ago(dt_str: str) -> str:
@@ -2969,58 +3010,15 @@ def ui(
       30% {{ opacity: 1; transform: translateY(-4px); }}
     }}
     .chat-input {{
-      padding: 12px 16px;
+      padding: 10px 12px;
       border-top: 1px solid var(--border);
       background: var(--white);
-      min-height: 20px;
-    }}
-    .chat-chips {{
       display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+      gap: 8px;
+      align-items: center;
     }}
-    .chat-chip {{
-      background: white;
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 7px 14px;
-      border-radius: 100px;
-      font-size: 12px;
-      font-weight: 500;
-      font-family: 'Inter', sans-serif;
-      cursor: pointer;
-      transition: all 0.15s;
-      white-space: nowrap;
-    }}
-    .chat-chip:hover {{
-      border-color: var(--primary);
-      color: var(--primary);
-      background: var(--primary-light);
-    }}
-    .chat-chip.selected {{
-      background: var(--primary);
-      color: white;
-      border-color: var(--primary);
-    }}
-    .chat-chip-confirm {{
-      background: var(--primary);
-      color: white;
-      border: none;
-      padding: 8px 20px;
-      border-radius: 100px;
-      font-size: 12px;
-      font-weight: 600;
-      font-family: 'Inter', sans-serif;
-      cursor: pointer;
-      transition: background 0.15s;
-      margin-top: 4px;
-    }}
-    .chat-chip-confirm:hover {{
-      background: #0f766e;
-    }}
-    .chat-text-input {{
-      width: 100%;
-      box-sizing: border-box;
+    .chat-input input {{
+      flex: 1;
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 9px 12px;
@@ -3028,20 +3026,74 @@ def ui(
       font-size: 13px;
       color: var(--text);
       outline: none;
-      margin-top: 6px;
+      box-sizing: border-box;
     }}
-    .chat-text-input:focus {{
+    .chat-input input:focus {{
       border-color: var(--primary);
     }}
-    .chat-start-over {{
-      display: inline-block;
-      margin-top: 8px;
-      font-size: 12px;
-      color: var(--text-light);
+    .chat-input button {{
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 12px;
       cursor: pointer;
-      transition: color 0.15s;
+      display: flex;
+      align-items: center;
+      transition: background 0.15s;
     }}
-    .chat-start-over:hover {{
+    .chat-input button:hover {{
+      background: #0f766e;
+    }}
+    .chat-input button:disabled {{
+      opacity: 0.5;
+      cursor: not-allowed;
+    }}
+    .chat-job-card {{
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-top: 6px;
+      font-size: 12px;
+      transition: border-color 0.15s;
+    }}
+    .chat-job-card:hover {{
+      border-color: var(--primary);
+    }}
+    .chat-job-card a {{
+      color: var(--primary);
+      font-weight: 600;
+      text-decoration: none;
+      font-size: 12px;
+      line-height: 1.3;
+      display: block;
+    }}
+    .chat-job-card a:hover {{ text-decoration: underline; }}
+    .chat-job-card .chat-job-meta {{
+      color: var(--text-light);
+      font-size: 11px;
+      margin-top: 2px;
+    }}
+    .chat-suggestions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+    }}
+    .chat-suggestion {{
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 10px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: all 0.15s;
+    }}
+    .chat-suggestion:hover {{
+      border-color: var(--primary);
       color: var(--primary);
     }}
     @media (max-width: 768px) {{
@@ -3246,9 +3298,9 @@ def ui(
 <div id="chatWidget" class="chat-widget">
   <button id="chatBubble" class="chat-bubble" aria-label="Job search assistant">
     <svg class="chat-bubble-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
     </svg>
-    <span class="chat-bubble-label">Find jobs</span>
+    <span class="chat-bubble-label">Ask AI</span>
     <svg class="chat-bubble-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
     </svg>
@@ -3256,8 +3308,10 @@ def ui(
   <div id="chatPanel" class="chat-panel">
     <div class="chat-panel-header">
       <div class="chat-panel-title">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        Find Your Next Job
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+        </svg>
+        AI Job Assistant
       </div>
       <button id="chatPanelClose" class="chat-panel-close-btn" aria-label="Close">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3266,7 +3320,12 @@ def ui(
       </button>
     </div>
     <div id="chatMessages" class="chat-messages"></div>
-    <div id="chatInput" class="chat-input"></div>
+    <div id="chatInput" class="chat-input">
+      <input type="text" id="chatTextInput" placeholder="Ask about jobs, companies, or trends..." autocomplete="off">
+      <button id="chatSendBtn" aria-label="Send">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -3276,65 +3335,11 @@ def ui(
   var panel = document.getElementById('chatPanel');
   var panelClose = document.getElementById('chatPanelClose');
   var messagesEl = document.getElementById('chatMessages');
-  var inputEl = document.getElementById('chatInput');
-
-  var answers = {{ role: '', city: '', tech: [], lang: '' }};
-  var currentStep = 0;
+  var textInput = document.getElementById('chatTextInput');
+  var sendBtn = document.getElementById('chatSendBtn');
   var isOpen = false;
-
-  var steps = [
-    {{
-      question: "Hi! I can help you find the right job. What kind of role are you looking for?",
-      type: 'single',
-      chips: [
-        {{ label: 'Software Engineer', value: 'Software Engineer' }},
-        {{ label: 'Data / AI', value: 'Data' }},
-        {{ label: 'DevOps / Cloud', value: 'DevOps' }},
-        {{ label: 'Design / UX', value: 'Design' }},
-        {{ label: 'Product / PM', value: 'Product' }},
-        {{ label: 'Other...', value: '__other__' }}
-      ],
-      onAnswer: function(val) {{ answers.role = val; }}
-    }},
-    {{
-      question: "Great choice! Where would you like to work?",
-      type: 'single',
-      chips: [
-        {{ label: 'Eindhoven', value: 'Eindhoven' }},
-        {{ label: 'Amsterdam', value: 'Amsterdam' }},
-        {{ label: 'Rotterdam', value: 'Rotterdam' }},
-        {{ label: 'Utrecht', value: 'Utrecht' }},
-        {{ label: 'Remote', value: '' }},
-        {{ label: 'Anywhere in NL', value: '' }}
-      ],
-      onAnswer: function(val) {{ answers.city = val; }}
-    }},
-    {{
-      question: "Any preferred tech stack? Pick as many as you like.",
-      type: 'multi',
-      chips: [
-        {{ label: 'Python', value: 'Python' }},
-        {{ label: 'Java', value: 'Java' }},
-        {{ label: 'JavaScript / React', value: 'React' }},
-        {{ label: '.NET / C#', value: 'C#' }},
-        {{ label: 'Go / Rust', value: 'Go' }},
-        {{ label: "Don't care", value: '' }}
-      ],
-      onAnswer: function(val) {{
-        answers.tech = val.filter(function(v) {{ return v !== ''; }});
-      }}
-    }},
-    {{
-      question: "Last one -- what language should the job postings be in?",
-      type: 'single',
-      chips: [
-        {{ label: 'English', value: 'en' }},
-        {{ label: 'Dutch', value: 'nl' }},
-        {{ label: 'Show all', value: '' }}
-      ],
-      onAnswer: function(val) {{ answers.lang = val; }}
-    }}
-  ];
+  var isLoading = false;
+  var history = [];  // conversation history for API
 
   function togglePanel() {{
     isOpen = !isOpen;
@@ -3342,8 +3347,9 @@ def ui(
     bubble.classList.toggle('open', isOpen);
     if (isOpen) {{
       bubble.classList.add('opened-once');
-      if (currentStep === 0 && messagesEl.children.length === 0) {{
-        startConversation();
+      textInput.focus();
+      if (messagesEl.children.length === 0) {{
+        showWelcome();
       }}
     }}
     if (window.innerWidth <= 768) {{
@@ -3354,12 +3360,78 @@ def ui(
   bubble.addEventListener('click', togglePanel);
   panelClose.addEventListener('click', togglePanel);
 
-  function addMessage(text, sender) {{
+  function showWelcome() {{
+    addBotMessage("Hi! I'm the HireAssist AI assistant. Ask me anything about jobs in the Netherlands.");
+    showSuggestions([
+      "Python jobs in Amsterdam",
+      "What's new today?",
+      "Top hiring companies",
+      "Jobs at Adyen"
+    ]);
+  }}
+
+  function showSuggestions(items) {{
+    var wrap = document.createElement('div');
+    wrap.className = 'chat-suggestions';
+    items.forEach(function(text) {{
+      var btn = document.createElement('button');
+      btn.className = 'chat-suggestion';
+      btn.textContent = text;
+      btn.addEventListener('click', function() {{
+        textInput.value = text;
+        sendMessage();
+      }});
+      wrap.appendChild(btn);
+    }});
+    messagesEl.appendChild(wrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }}
+
+  function addBotMessage(text) {{
     var div = document.createElement('div');
-    div.className = 'chat-msg ' + sender;
+    div.className = 'chat-msg bot';
+    div.innerHTML = formatMessage(text);
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }}
+
+  function addUserMessage(text) {{
+    var div = document.createElement('div');
+    div.className = 'chat-msg user';
     div.textContent = text;
     messagesEl.appendChild(div);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }}
+
+  function formatMessage(text) {{
+    // Convert **bold** to <strong>
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // Convert newlines to <br>
+    text = text.replace(/\n/g, '<br>');
+    return text;
+  }}
+
+  function renderJobCards(jobs) {{
+    if (!jobs || jobs.length === 0) return;
+    jobs.forEach(function(j) {{
+      var card = document.createElement('div');
+      card.className = 'chat-job-card';
+      var title = j.title || 'Untitled';
+      var company = j.company || '';
+      var city = j.city || '';
+      var url = j.url || '#';
+      var meta = company + (city ? ' -- ' + city : '');
+      card.innerHTML = '<a href="' + url + '" target="_blank" rel="noopener">' + escapeHtml(title) + '</a>'
+        + '<div class="chat-job-meta">' + escapeHtml(meta) + '</div>';
+      messagesEl.appendChild(card);
+    }});
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }}
+
+  function escapeHtml(s) {{
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
   }}
 
   function showTyping() {{
@@ -3376,183 +3448,62 @@ def ui(
     if (el) el.remove();
   }}
 
-  function clearInput() {{
-    inputEl.innerHTML = '';
-  }}
+  function sendMessage() {{
+    var text = textInput.value.trim();
+    if (!text || isLoading) return;
 
-  function renderChips(step) {{
-    clearInput();
-    var wrapper = document.createElement('div');
-    wrapper.className = 'chat-chips';
+    addUserMessage(text);
+    textInput.value = '';
+    isLoading = true;
+    sendBtn.disabled = true;
 
-    if (step.type === 'single') {{
-      step.chips.forEach(function(chip) {{
-        var btn = document.createElement('button');
-        btn.className = 'chat-chip';
-        btn.textContent = chip.label;
-        btn.addEventListener('click', function() {{
-          if (chip.value === '__other__') {{
-            showOtherInput(step);
-            return;
-          }}
-          addMessage(chip.label, 'user');
-          step.onAnswer(chip.value);
-          clearInput();
-          advanceStep();
-        }});
-        wrapper.appendChild(btn);
-      }});
-    }}
+    // Add to conversation history
+    history.push({{ role: 'user', content: text }});
+    // Keep last 10 messages
+    if (history.length > 10) history = history.slice(-10);
 
-    if (step.type === 'multi') {{
-      var selected = [];
-      step.chips.forEach(function(chip) {{
-        var btn = document.createElement('button');
-        btn.className = 'chat-chip';
-        btn.textContent = chip.label;
-        btn.addEventListener('click', function() {{
-          if (chip.value === '') {{
-            addMessage(chip.label, 'user');
-            step.onAnswer([]);
-            clearInput();
-            advanceStep();
-            return;
-          }}
-          var idx = selected.indexOf(chip.value);
-          if (idx > -1) {{
-            selected.splice(idx, 1);
-            btn.classList.remove('selected');
-          }} else {{
-            selected.push(chip.value);
-            btn.classList.add('selected');
-          }}
-          var existing = inputEl.querySelector('.chat-chip-confirm');
-          if (selected.length > 0 && !existing) {{
-            var confirm = document.createElement('button');
-            confirm.className = 'chat-chip-confirm';
-            confirm.textContent = 'Continue';
-            confirm.addEventListener('click', function() {{
-              addMessage(selected.join(', '), 'user');
-              step.onAnswer(selected.slice());
-              clearInput();
-              advanceStep();
-            }});
-            inputEl.appendChild(confirm);
-          }} else if (selected.length === 0 && existing) {{
-            existing.remove();
-          }}
-        }});
-        wrapper.appendChild(btn);
-      }});
-    }}
-
-    inputEl.insertBefore(wrapper, inputEl.firstChild);
-  }}
-
-  function showOtherInput(step) {{
-    clearInput();
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'chat-text-input';
-    input.placeholder = 'Type the role you are looking for...';
-    input.addEventListener('keydown', function(e) {{
-      if (e.key === 'Enter' && input.value.trim()) {{
-        var val = input.value.trim();
-        addMessage(val, 'user');
-        step.onAnswer(val);
-        clearInput();
-        advanceStep();
-      }}
-    }});
-    inputEl.appendChild(input);
-
-    var submitBtn = document.createElement('button');
-    submitBtn.className = 'chat-chip-confirm';
-    submitBtn.textContent = 'Continue';
-    submitBtn.addEventListener('click', function() {{
-      if (input.value.trim()) {{
-        var val = input.value.trim();
-        addMessage(val, 'user');
-        step.onAnswer(val);
-        clearInput();
-        advanceStep();
-      }}
-    }});
-    inputEl.appendChild(submitBtn);
-    input.focus();
-  }}
-
-  var techRoles = ['Software Engineer', 'Data', 'DevOps'];
-
-  function advanceStep() {{
-    currentStep++;
-    // Skip tech stack step (index 2) for non-technical roles
-    if (currentStep === 2 && techRoles.indexOf(answers.role) === -1) {{
-      currentStep++;
-    }}
-    if (currentStep >= steps.length) {{
-      showTyping();
-      setTimeout(function() {{
-        hideTyping();
-        showResults();
-      }}, 800);
-    }} else {{
-      showTyping();
-      setTimeout(function() {{
-        hideTyping();
-        addMessage(steps[currentStep].question, 'bot');
-        renderChips(steps[currentStep]);
-      }}, 600);
-    }}
-  }}
-
-  function showResults() {{
-    var params = [];
-    if (answers.role) {{
-      params.push('q=' + encodeURIComponent(answers.role));
-    }}
-    if (answers.city) {{
-      params.push('city=' + encodeURIComponent(answers.city));
-    }}
-    params.push('country=Netherlands');
-    if (answers.lang) {{
-      params.push('lang=' + encodeURIComponent(answers.lang));
-    }}
-    if (answers.tech && answers.tech.length > 0) {{
-      params.push('tech=' + encodeURIComponent(answers.tech[0]));
-    }}
-    var url = '/ui' + (params.length > 0 ? '?' + params.join('&') : '');
-
-    addMessage("Here are your personalized results. Taking you there now!", 'bot');
-    clearInput();
-
-    var startOver = document.createElement('span');
-    startOver.className = 'chat-start-over';
-    startOver.textContent = 'Start over';
-    startOver.addEventListener('click', resetChat);
-    inputEl.appendChild(startOver);
-
-    setTimeout(function() {{
-      window.location.href = url;
-    }}, 1200);
-  }}
-
-  function startConversation() {{
-    currentStep = 0;
-    answers = {{ role: '', city: '', tech: [], englishOnly: false }};
-    messagesEl.innerHTML = '';
-    clearInput();
     showTyping();
-    setTimeout(function() {{
+
+    fetch('/api/chat', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ messages: history }})
+    }})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(data) {{
       hideTyping();
-      addMessage(steps[0].question, 'bot');
-      renderChips(steps[0]);
-    }}, 500);
+      isLoading = false;
+      sendBtn.disabled = false;
+
+      var reply = data.reply || "Sorry, I couldn't process that.";
+      addBotMessage(reply);
+
+      // Add assistant reply to history
+      history.push({{ role: 'assistant', content: reply }});
+
+      // Render job cards if returned
+      if (data.jobs && data.jobs.length > 0) {{
+        renderJobCards(data.jobs);
+      }}
+
+      textInput.focus();
+    }})
+    .catch(function(err) {{
+      hideTyping();
+      isLoading = false;
+      sendBtn.disabled = false;
+      addBotMessage("Something went wrong. Please try again.");
+      textInput.focus();
+    }});
   }}
 
-  function resetChat() {{
-    startConversation();
-  }}
+  sendBtn.addEventListener('click', sendMessage);
+  textInput.addEventListener('keydown', function(e) {{
+    if (e.key === 'Enter' && !e.shiftKey) {{
+      e.preventDefault();
+      sendMessage();
+    }}
+  }});
 }})();
 </script>
 

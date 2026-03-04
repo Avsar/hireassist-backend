@@ -7,5 +7,5 @@ python-dotenv>=1.0.0
 python-multipart>=0.0.6
 apscheduler>=3.10.0
 
-# Optional: only needed for agent_discover.py --use-ai-cleanup
-# anthropic>=0.25.0
+# AI assistant + optional discovery cleanup
+anthropic>=0.25.0
