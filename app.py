@@ -3407,7 +3407,7 @@ def ui(
     // Convert **bold** to <strong>
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     // Convert newlines to <br>
-    text = text.replace(/\n/g, '<br>');
+    text = text.replace(/\\n/g, '<br>');
     return text;
   }}
 
