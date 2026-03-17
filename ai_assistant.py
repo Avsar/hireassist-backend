@@ -26,19 +26,19 @@ DB_FILE = get_db_path()
 
 SYSTEM_PROMPT = """\
 You are the HireAssist job search assistant for the Netherlands tech job market.
-You help users find jobs, explore companies, and understand hiring trends.
+You help users find hidden jobs directly from company career pages — not from LinkedIn or Indeed.
 
 Guidelines:
 - Always search the local database first using search_jobs.
-- If search_jobs returns fewer than 3 results, ALSO use web_search_jobs to find more
-  from the internet. Those results get saved for future users automatically.
-- Use web_search for salary info, company reviews, market trends, or any question
-  the local database cannot answer.
+- If search_jobs returns fewer than 3 results, ALSO use discover_jobs to find hidden jobs
+  from company career pages. discover_jobs searches for Greenhouse, Lever, SmartRecruiters,
+  Recruitee, and Ashby career pages and calls their APIs directly. It also scrapes non-ATS
+  career pages. New companies found are added for daily monitoring.
+- Use web_search for salary info, company reviews, market trends, or general questions.
 - Default to Netherlands jobs. Only mention non-NL if the user asks.
 - Keep responses concise (2-4 sentences + job list if relevant).
 - When showing jobs, include the top 5-10 most relevant results.
 - If no results found anywhere, suggest broadening the search.
-- You can answer general career advice briefly, but steer back to job search.
 - Format job titles, company names, and cities clearly.
 - Do NOT invent jobs or companies. Only report what the tools return.
 """
@@ -143,18 +143,18 @@ TOOLS = [
         },
     },
     {
-        "name": "web_search_jobs",
-        "description": "Search the web for job listings in the Netherlands. Finds jobs on LinkedIn, Indeed, career pages, and other job boards. Results are automatically saved to the database for future users. Use when local database search returns few results.",
+        "name": "discover_jobs",
+        "description": "Discover hidden jobs by searching for company career pages (not job boards). Finds companies with Greenhouse, Lever, SmartRecruiters, Recruitee, Ashby career pages and calls their APIs directly. Also scrapes non-ATS career pages. Results are saved to the database. Use when local database has few results for a query.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "role": {
                     "type": "string",
-                    "description": "Job role/title to search for (e.g. 'data engineer', 'React developer')",
+                    "description": "Job role to search for (e.g. 'data engineer', 'recruiter')",
                 },
                 "city": {
                     "type": "string",
-                    "description": "City in Netherlands (e.g. 'Amsterdam', 'Rotterdam')",
+                    "description": "City in Netherlands (e.g. 'Eindhoven', 'Amsterdam')",
                 },
             },
             "required": ["role"],
@@ -180,160 +180,22 @@ def _check_web_rate() -> bool:
     return True
 
 
-# URL patterns for individual job listings (parseable + ingestible)
-_INDIVIDUAL_PATTERNS = [
-    r"linkedin\.com/jobs/view/",
-    r"indeed\.\w+/viewjob",
-    r"indeed\.\w+/rc/clk",
-    r"glassdoor\.\w+/job-listing/",
-    r"boards\.greenhouse\.io/.+/jobs/\d+",
-    r"jobs\.lever\.co/.+/[a-f0-9-]+",
-    r"jobs\.smartrecruiters\.com/.+/\d+",
-    r"/careers?/.+/\d+",
-    r"/jobs?/\d+",
-]
+# ATS URL patterns for detection
+_ATS_PATTERNS = {
+    "greenhouse": re.compile(r"boards\.greenhouse\.io/([a-zA-Z0-9_\-]+)"),
+    "lever": re.compile(r"jobs\.lever\.co/([a-zA-Z0-9_\-]+)"),
+    "smartrecruiters": re.compile(r"jobs\.smartrecruiters\.com/([a-zA-Z0-9_\-]+)"),
+    "recruitee": re.compile(r"([a-zA-Z0-9_\-]+)\.recruitee\.com"),
+    "ashby": re.compile(r"jobs\.ashbyhq\.com/([a-zA-Z0-9_\-]+)"),
+}
 
-# Aggregator/index pages -- return as reference, don't ingest
-_AGGREGATOR_PATTERNS = [
-    r"indeed\.\w+/q-.*-vacatures",
-    r"indeed\.\w+/jobs\?q=",
-    r"linkedin\.com/jobs/search",
-    r"glassdoor\.\w+/Job/",
-]
-
-
-def _parse_job_from_result(title: str, url: str, body: str) -> dict | None:
-    """Extract structured job data from a DuckDuckGo search result."""
-    parsed = None
-
-    if "linkedin.com" in url:
-        # English: "Senior Data Engineer - Amsterdam | Booking.com | LinkedIn"
-        # Dutch: "KPN zoekt een Python Developer in Amsterdam, Noord-Holland"
-        # Also: "Company hiring Job Title in City | LinkedIn"
-        dutch_m = re.match(
-            r"(.+?)\s+zoekt een\s+(.+?)(?:\s+in\s+(.+?))?$", title
-        )
-        hiring_m = re.match(
-            r"(.+?)\s+hiring\s+(.+?)(?:\s+in\s+(.+?))?(?:\s*\|.*)?$", title
-        )
-        if dutch_m:
-            parsed = {
-                "title": dutch_m.group(2).strip(),
-                "company": dutch_m.group(1).strip(),
-                "city": dutch_m.group(3) or "",
-            }
-        elif hiring_m:
-            parsed = {
-                "title": hiring_m.group(2).strip(),
-                "company": hiring_m.group(1).strip(),
-                "city": hiring_m.group(3) or "",
-            }
-        else:
-            parts = title.split(" | ")
-            if len(parts) >= 2:
-                job_part = parts[0]
-                company = parts[-2] if len(parts) >= 3 else ""
-                segments = job_part.rsplit(" - ", 1)
-                job_title = segments[0].strip()
-                city = segments[1].strip() if len(segments) > 1 else ""
-                parsed = {"title": job_title, "company": company.strip(), "city": city}
-
-    elif "indeed" in url:
-        # "Data Engineer - Amsterdam - Booking.com | Indeed.nl"
-        clean = re.sub(r"\s*\|\s*Indeed.*$", "", title)
-        parts = clean.rsplit(" - ", 2)
-        if len(parts) >= 2:
-            job_title = parts[0].strip()
-            city = parts[1].strip() if len(parts) >= 3 else ""
-            company = parts[2].strip() if len(parts) >= 3 else parts[1].strip()
-            parsed = {"title": job_title, "company": company, "city": city}
-
-    elif "glassdoor" in url:
-        # "Data Engineer - Company Name | Glassdoor"
-        clean = re.sub(r"\s*\|\s*Glassdoor.*$", "", title)
-        parts = clean.split(" - ", 1)
-        if len(parts) >= 2:
-            parsed = {"title": parts[0].strip(), "company": parts[1].strip(), "city": ""}
-
-    else:
-        # Generic: "Title at Company in City" or "Title - Company"
-        m = re.match(r"(.+?)\s+(?:at|bij|@)\s+(.+?)(?:\s+in\s+(.+))?$", title)
-        if m:
-            parsed = {"title": m.group(1), "company": m.group(2), "city": m.group(3) or ""}
-
-    if parsed:
-        parsed["url"] = url
-        # Clean city: strip province, country, and trailing junk
-        if parsed["city"]:
-            c = parsed["city"]
-            # Remove ", Noord-Holland, Nederland" etc.
-            c = re.sub(
-                r",?\s*(Noord-Holland|Zuid-Holland|North Holland|South Holland|"
-                r"Utrecht|Gelderland|Noord-Brabant|Limburg|Overijssel|Flevoland|"
-                r"Groningen|Friesland|Drenthe|Zeeland|Netherlands|Nederland|NL|"
-                r"the Netherlands).*$",
-                "", c, flags=re.IGNORECASE,
-            ).strip().rstrip(",. ")
-            # Remove " | LinkedIn" suffix
-            c = re.sub(r"\s*\|.*$", "", c).strip()
-            parsed["city"] = c if c else ""
-
-    return parsed
-
-
-def _ingest_web_jobs(job_dicts: list[dict]) -> dict:
-    """Insert web-found jobs into DB without deactivating existing ones."""
-    import job_intel
-
-    if not job_dicts:
-        return {"new": 0, "skipped": 0}
-
-    now = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    job_intel.ensure_intel_tables(conn)
-
-    stats = {"new": 0, "skipped": 0}
-    source = "web_search"
-
-    for jd in job_dicts:
-        job_key = job_intel.make_job_key(source, jd)
-        company = jd.get("company") or "Unknown"
-        title = jd.get("title", "")
-        if not title:
-            continue
-        city = jd.get("city") or None
-        url = jd.get("url", "")
-        department = job_intel.infer_department(title)
-        tech_tags = job_intel.extract_tech_tags(title)
-
-        existing = conn.execute(
-            "SELECT id FROM jobs WHERE source=? AND job_key=?",
-            (source, job_key),
-        ).fetchone()
-
-        if existing:
-            conn.execute(
-                "UPDATE jobs SET last_seen_at=?, is_active=1 WHERE source=? AND job_key=?",
-                (now, source, job_key),
-            )
-            stats["skipped"] += 1
-        else:
-            conn.execute(
-                """INSERT INTO jobs
-                   (source, company_name, job_key, title, location_raw, country, city,
-                    url, department, job_type, tech_tags,
-                    posted_at, first_seen_at, last_seen_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-                (source, company, job_key, title, "", "Netherlands", city,
-                 url, department, "", tech_tags, None, now, now),
-            )
-            stats["new"] += 1
-
-    conn.commit()
-    conn.close()
-    logger.info("Web job ingestion: %d new, %d existing", stats["new"], stats["skipped"])
-    return stats
+# Domains to exclude from DDG results (aggregators, not direct career pages)
+_EXCLUDED_DOMAINS = {
+    "linkedin.com", "indeed.com", "indeed.nl", "glassdoor.com", "glassdoor.nl",
+    "monster.com", "monster.nl", "jooble.org", "ziprecruiter.com",
+    "nationalevacaturebank.nl", "simplyhired.nl", "adzuna.nl", "jobbird.com",
+    "werk.nl", "intermediair.nl", "jobted.nl", "expatjobs.eu",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -354,8 +216,8 @@ def _execute_tool(name: str, args: dict) -> str:
             return _tool_market_summary(args)
         elif name == "web_search":
             return _tool_web_search(args)
-        elif name == "web_search_jobs":
-            return _tool_web_search_jobs(args)
+        elif name == "discover_jobs":
+            return _tool_discover_jobs(args)
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except Exception as e:
@@ -516,88 +378,270 @@ def _tool_web_search(args: dict) -> str:
     return json.dumps({"count": len(compact), "results": compact})
 
 
-def _tool_web_search_jobs(args: dict) -> str:
-    """Search web for job listings, parse results, ingest into DB."""
+def _detect_ats(url: str) -> tuple[str, str] | None:
+    """Detect ATS platform and extract token from a URL.
+    Returns (source, token) or None.
+    """
+    for source, pattern in _ATS_PATTERNS.items():
+        m = pattern.search(url)
+        if m:
+            return (source, m.group(1))
+    return None
+
+
+def _is_excluded_domain(url: str) -> bool:
+    """Check if URL belongs to an excluded job board."""
+    try:
+        host = urlparse(url).netloc.lower()
+        return any(host == d or host.endswith("." + d) for d in _EXCLUDED_DOMAINS)
+    except Exception:
+        return False
+
+
+def _fetch_ats_jobs(source: str, token: str) -> list[dict]:
+    """Fetch jobs from an ATS API using existing normalize_jobs().
+    Returns list of normalized job dicts.
+    """
+    try:
+        from app import normalize_jobs
+        return normalize_jobs("_pending_", source, token)
+    except Exception as e:
+        logger.warning("ATS fetch failed (%s/%s): %s", source, token, e)
+        return []
+
+
+def _try_lightweight_scrape(url: str) -> list[dict]:
+    """Lightweight HTTP scrape of a career page — JSON-LD + HTML heuristics."""
+    try:
+        import requests as _req
+        from bs4 import BeautifulSoup
+        from agent_scrape import _parse_jsonld, _parse_html_heuristics
+
+        resp = _req.get(url, timeout=10, headers={"User-Agent": "HireAssist/0.3"})
+        if resp.status_code != 200:
+            return []
+        soup = BeautifulSoup(resp.text, "html.parser")
+        jobs = _parse_jsonld(soup, url)
+        if not jobs:
+            jobs = _parse_html_heuristics(soup, url)
+        return jobs
+    except Exception as e:
+        logger.debug("Lightweight scrape failed (%s): %s", url, e)
+        return []
+
+
+def _filter_jobs(jobs: list[dict], role: str, city: str) -> list[dict]:
+    """Filter job list by role keyword in title and optional city match."""
+    role_lower = role.lower()
+    role_words = role_lower.split()
+    matched = []
+    for j in jobs:
+        title = (j.get("title") or "").lower()
+        # Check if any role word appears in the title
+        if not any(w in title for w in role_words):
+            continue
+        # City filter (if specified)
+        if city:
+            job_city = (j.get("city") or j.get("location_raw") or "").lower()
+            if city.lower() not in job_city:
+                continue
+        matched.append(j)
+    return matched
+
+
+def _ingest_discovered_jobs(company_name: str, source: str, token: str,
+                            jobs: list[dict]) -> dict:
+    """Insert discovered jobs into DB and add company to companies table."""
+    import job_intel
+
+    if not jobs:
+        return {"new": 0, "updated": 0}
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    job_intel.ensure_intel_tables(conn)
+
+    # Add company to companies table if not exists (for daily pipeline)
+    if source in ("greenhouse", "lever", "smartrecruiters", "recruitee", "ashby"):
+        existing_co = conn.execute(
+            "SELECT id FROM companies WHERE source=? AND token=?",
+            (source, token),
+        ).fetchone()
+        if not existing_co:
+            conn.execute(
+                """INSERT INTO companies (name, source, token, active, discovered_at)
+                   VALUES (?, ?, ?, 1, ?)""",
+                (company_name, source, token, now),
+            )
+            logger.info("Added new company: %s (%s/%s)", company_name, source, token)
+
+    # Insert/update jobs without deactivation (discover context — we may not
+    # have the full job list, so upsert_jobs deactivation would be destructive)
+    stats = {"new": 0, "updated": 0}
+    for jd in jobs:
+        job_key = job_intel.make_job_key(source, jd)
+        title = jd.get("title") or ""
+        if not title:
+            continue
+        existing = conn.execute(
+            "SELECT id FROM jobs WHERE source=? AND job_key=?",
+            (source, job_key),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE jobs SET last_seen_at=?, is_active=1 WHERE source=? AND job_key=?",
+                (now, source, job_key),
+            )
+            stats["updated"] += 1
+        else:
+            city = jd.get("city") or None
+            url = jd.get("apply_url") or jd.get("url") or ""
+            department = jd.get("department") or job_intel.infer_department(title)
+            tech_tags = jd.get("tech_tags") or job_intel.extract_tech_tags(title)
+            conn.execute(
+                """INSERT INTO jobs
+                   (source, company_name, job_key, title, location_raw, country, city,
+                    url, department, job_type, tech_tags,
+                    posted_at, first_seen_at, last_seen_at, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                (source, company_name, job_key, title,
+                 jd.get("location_raw", ""), "Netherlands", city,
+                 url, department, "", tech_tags, None, now, now),
+            )
+            stats["new"] += 1
+
+    conn.commit()
+    conn.close()
+    return stats
+
+
+def _tool_discover_jobs(args: dict) -> str:
+    """Discover hidden jobs from company career pages (not job boards)."""
     role = args.get("role", "")
     city = args.get("city", "")
     if not role:
         return json.dumps({"error": "No role specified"})
     if not _check_web_rate():
-        return json.dumps({"error": "Web search rate limit reached. Try again in a moment."})
+        return json.dumps({"error": "Rate limit reached. Try again in a moment."})
 
     try:
         from ddgs import DDGS
         ddgs = DDGS()
     except Exception as e:
-        logger.error("Web job search failed: %s", e)
+        logger.error("DDG search failed: %s", e)
         return json.dumps({"error": f"Search failed: {e}"})
 
-    # Two-pass search: general query + targeted LinkedIn for individual listings
+    # Build queries targeting career pages, NOT job boards
     city_part = f" {city}" if city else ""
+    nl_part = f" {city} Netherlands" if city else " Netherlands"
     queries = [
-        f"{role} jobs{city_part} Netherlands",
-        f"{role}{city_part} Netherlands site:linkedin.com/jobs/view",
+        f'{role}{city_part} careers werken-bij vacature',
+        f'{role}{nl_part} site:boards.greenhouse.io',
+        f'{role}{nl_part} site:jobs.lever.co',
+        f'{role}{nl_part} site:jobs.smartrecruiters.com',
+        f'{role}{nl_part} site:recruitee.com',
     ]
 
-    all_results = []
+    # Collect unique URLs from DDG
     seen_urls = set()
+    career_urls = []  # (url, title)
     for q in queries:
         try:
-            hits = ddgs.text(q, max_results=10) or []
+            n = 5 if "site:" in q else 10
+            hits = ddgs.text(q, max_results=n) or []
             for r in hits:
                 url = r.get("href", "")
-                if url not in seen_urls:
+                if url and url not in seen_urls and not _is_excluded_domain(url):
                     seen_urls.add(url)
-                    all_results.append(r)
+                    career_urls.append((url, r.get("title", "")))
         except Exception as e:
-            logger.warning("DDG query failed (%s): %s", q[:40], e)
+            logger.warning("DDG query failed: %s", e)
 
-    if not all_results:
-        return json.dumps({"jobs": [], "references": [], "ingested_new": 0, "count": 0})
+    if not career_urls:
+        return json.dumps({"jobs": [], "companies_found": 0, "count": 0})
 
-    parsed_jobs = []
-    references = []
+    # Process career pages (max 5 to stay within time budget)
+    all_matched_jobs = []
+    companies_found = 0
+    seen_ats = set()  # Avoid duplicate ATS calls
 
-    for r in all_results:
-        url = r.get("href", "")
-        title = r.get("title", "")
-        body = r.get("body", "") or ""
+    for url, ddg_title in career_urls[:8]:
+        ats = _detect_ats(url)
 
-        # Skip aggregator pages
-        if any(re.search(pat, url) for pat in _AGGREGATOR_PATTERNS):
-            references.append({"title": title, "url": url, "snippet": body[:200]})
-            continue
+        if ats:
+            source, token = ats
+            ats_key = f"{source}:{token}"
+            if ats_key in seen_ats:
+                continue
+            seen_ats.add(ats_key)
 
-        # Try to parse individual job listings
-        is_individual = any(re.search(pat, url) for pat in _INDIVIDUAL_PATTERNS)
-        if is_individual:
-            parsed = _parse_job_from_result(title, url, body)
-            if parsed and parsed.get("title"):
-                parsed_jobs.append(parsed)
+            # Fetch all jobs from this ATS board
+            if source == "ashby":
+                from agent_scrape import _scrape_ashby_api
+                raw_jobs = _scrape_ashby_api(token)
+                # Ashby returns {title, location_raw, apply_url} — needs company name
+                for j in raw_jobs:
+                    j["company"] = ddg_title.split(" - ")[0].split("|")[0].strip() or token
+            else:
+                raw_jobs = _fetch_ats_jobs(source, token)
+
+            if not raw_jobs:
                 continue
 
-        # Fallback: add as reference
-        references.append({"title": title, "url": url, "snippet": body[:200]})
+            # Derive company name: prefer DDG title, fall back to token
+            ddg_name = ddg_title.split(" - ")[0].split("|")[0].strip()
+            # DDG title for ATS often contains the job title, not company
+            # Token is more reliable for company name
+            company_name = token.replace("-", " ").replace("_", " ").title()
+            if ddg_name and len(ddg_name) < 40 and not any(
+                w in ddg_name.lower() for w in ["job", "hiring", "career", "open position"]
+            ):
+                company_name = ddg_name
+            # Update company name in jobs (normalize_jobs uses placeholder)
+            for j in raw_jobs:
+                j["company"] = company_name
 
-    # Ingest parsed jobs into DB
-    ingestion = _ingest_web_jobs(parsed_jobs)
+            # Filter by role and city
+            matched = _filter_jobs(raw_jobs, role, city)
+            if matched:
+                companies_found += 1
+                _ingest_discovered_jobs(company_name, source, token, raw_jobs)
+                for j in matched:
+                    all_matched_jobs.append({
+                        "title": j.get("title", ""),
+                        "company": company_name,
+                        "city": j.get("city") or j.get("location_raw", ""),
+                        "url": j.get("apply_url") or j.get("url", ""),
+                        "source": source,
+                    })
+        else:
+            # Non-ATS career page — try lightweight scrape
+            raw_jobs = _try_lightweight_scrape(url)
+            if not raw_jobs:
+                continue
 
-    # Return results for Claude
-    job_results = []
-    for j in parsed_jobs:
-        job_results.append({
-            "title": j["title"],
-            "company": j.get("company", ""),
-            "city": j.get("city", ""),
-            "url": j["url"],
-            "source": "web",
-        })
+            # Derive company from domain
+            host = urlparse(url).netloc
+            company_name = host.replace("www.", "").split(".")[0].title()
+
+            matched = _filter_jobs(raw_jobs, role, city)
+            if matched:
+                companies_found += 1
+                _ingest_discovered_jobs(company_name, "careers_page", url, matched)
+                for j in matched:
+                    all_matched_jobs.append({
+                        "title": j.get("title", ""),
+                        "company": company_name,
+                        "city": j.get("city") or j.get("location_raw", ""),
+                        "url": j.get("apply_url") or "",
+                        "source": "careers_page",
+                    })
 
     return json.dumps({
-        "jobs": job_results,
-        "references": references[:5],
-        "ingested_new": ingestion["new"],
-        "count": len(job_results),
+        "jobs": all_matched_jobs,
+        "companies_found": companies_found,
+        "count": len(all_matched_jobs),
     })
 
 
@@ -663,8 +707,8 @@ def handle_chat(messages: list[dict]) -> dict:
                 "content": result_str,
             })
 
-            # Collect jobs from search_jobs and web_search_jobs results
-            if tu.name in ("search_jobs", "web_search_jobs"):
+            # Collect jobs from search_jobs and discover_jobs results
+            if tu.name in ("search_jobs", "discover_jobs"):
                 try:
                     data = json.loads(result_str)
                     collected_jobs.extend(data.get("jobs", []))
