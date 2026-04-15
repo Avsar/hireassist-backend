@@ -23,12 +23,14 @@ Usage:
 import argparse
 import json
 import os
+import socket
 import sqlite3
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -43,6 +45,66 @@ except ImportError:
 
 DB_FILE = get_db_path()
 PROJECT_DIR = Path(__file__).parent
+PENDING_PUSH_FILE = PROJECT_DIR / "data" / ".pending_push.json"
+
+
+def check_host_reachable(host: str, timeout: float = 5.0) -> tuple[bool, str]:
+    """Resolve DNS for a host. Returns (ok, error_msg)."""
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.gethostbyname(host)
+        return True, ""
+    except socket.gaierror as e:
+        return False, f"DNS resolution failed: {e}"
+    except Exception as e:
+        return False, str(e)
+
+
+def with_retry(fn, attempts: int = 3, base_delay: float = 2.0, label: str = "op"):
+    """Call fn() up to `attempts` times with exponential backoff. Returns fn() result
+    or raises the last exception."""
+    last_exc = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            if i < attempts - 1:
+                delay = base_delay * (2 ** i)
+                print(f"    retry {i + 1}/{attempts - 1} for {label} in {delay:.1f}s ({e})")
+                time.sleep(delay)
+    raise last_exc
+
+
+def mark_pending_push(bundle_path: str, reason: str):
+    """Persist a marker that a push is still pending so retry_push.py can pick it up."""
+    PENDING_PUSH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PENDING_PUSH_FILE.write_text(json.dumps({
+        "bundle_path": bundle_path,
+        "reason": reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }), encoding="utf-8")
+    print(f"    Pending push marker written: {PENDING_PUSH_FILE}")
+
+
+def clear_pending_push():
+    if PENDING_PUSH_FILE.exists():
+        PENDING_PUSH_FILE.unlink()
+
+
+def send_health_alert(subject: str, body_text: str):
+    """Send a failure notification email to the operator. No-op if email not configured."""
+    to_addr = os.environ.get("ALERT_EMAIL", "amitavsar@gmail.com")
+    try:
+        from job_alerts import _send_email
+        # Simple HTML wrapper preserving whitespace.
+        html = "<pre style='font-family:monospace;white-space:pre-wrap'>{}</pre>".format(
+            body_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+        _send_email(to_addr, subject, html)
+        print(f"  Health alert sent to {to_addr}")
+    except Exception as e:
+        print(f"  [WARN] Could not send health alert: {e}")
 
 
 def run_step(label: str, cmd: list) -> bool:
@@ -130,11 +192,18 @@ def push_to_render(bundle_path: str) -> bool:
     print(f"  URL:  {render_url}/admin/import-bundle")
     print(f"{'=' * 60}\n")
 
-    start = time.time()
-    try:
-        bundle_data = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
-        payload = json.dumps(bundle_data).encode("utf-8")
+    host = urlparse(render_url).hostname or ""
+    ok, err = check_host_reachable(host)
+    if not ok:
+        print(f"  [FAILED] Pre-check: {err}")
+        mark_pending_push(bundle_path, f"render_dns_fail: {err}")
+        return False
 
+    start = time.time()
+    bundle_data = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
+    payload = json.dumps(bundle_data).encode("utf-8")
+
+    def _do_push():
         req = Request(
             f"{render_url}/admin/import-bundle",
             data=payload,
@@ -145,23 +214,29 @@ def push_to_render(bundle_path: str) -> bool:
             method="POST",
         )
         resp = urlopen(req, timeout=120)
-        elapsed = time.time() - start
-        result = json.loads(resp.read().decode("utf-8"))
+        return json.loads(resp.read().decode("utf-8"))
 
+    try:
+        result = with_retry(_do_push, attempts=3, base_delay=5.0, label="render_push")
+        elapsed = time.time() - start
         print(f"  [OK] Push successful ({elapsed:.1f}s)")
         summary = result.get("summary", {})
         for table, count in summary.items():
             print(f"    {table}: {count}")
+        clear_pending_push()
         return True
 
     except HTTPError as e:
         print(f"  [FAILED] HTTP {e.code}: {e.read().decode('utf-8', errors='replace')[:200]}")
+        mark_pending_push(bundle_path, f"render_http_{e.code}")
         return False
     except URLError as e:
         print(f"  [FAILED] Connection error: {e.reason}")
+        mark_pending_push(bundle_path, f"render_url_error: {e.reason}")
         return False
     except Exception as e:
         print(f"  [FAILED] Push error: {e}")
+        mark_pending_push(bundle_path, f"render_exception: {e}")
         return False
 
 
@@ -181,7 +256,7 @@ def git_push_bundle(bundle_path: str) -> bool:
             print("  Bundle unchanged -- nothing to push")
             return True
 
-        # Stage, commit, push
+        # Stage + commit always (local commit is safe even if remote is unreachable)
         today = date.today().isoformat()
         subprocess.run(
             ["git", "add", bundle_path],
@@ -191,15 +266,28 @@ def git_push_bundle(bundle_path: str) -> bool:
             ["git", "commit", "-m", f"Daily bundle update ({today})"],
             cwd=str(PROJECT_DIR), check=True, capture_output=True,
         )
-        result = subprocess.run(
-            ["git", "push"],
-            cwd=str(PROJECT_DIR), capture_output=True, text=True, timeout=60,
-        )
-        if result.returncode == 0:
+
+        # DNS check before attempting push
+        ok, err = check_host_reachable("github.com")
+        if not ok:
+            print(f"  [FAILED] Pre-check: {err} -- commit is local, push deferred")
+            return False
+
+        def _do_git_push():
+            r = subprocess.run(
+                ["git", "push"],
+                cwd=str(PROJECT_DIR), capture_output=True, text=True, timeout=60,
+            )
+            if r.returncode != 0:
+                raise RuntimeError(r.stderr.strip() or "git push failed")
+            return r
+
+        try:
+            with_retry(_do_git_push, attempts=3, base_delay=5.0, label="git_push")
             print(f"  [OK] Bundle committed and pushed ({today})")
             return True
-        else:
-            print(f"  [FAILED] git push: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"  [FAILED] git push: {e} -- commit is local, run retry_push.py later")
             return False
 
     except subprocess.TimeoutExpired:
@@ -313,6 +401,42 @@ def main():
         status = "OK" if ok else "FAILED"
         print(f"  {step:<20} [{status}]")
     print(f"{'=' * 60}")
+
+    # Send failure alert if any step failed
+    failed = [step for step, ok in results.items() if not ok]
+    if failed:
+        log_tail = _tail_pipeline_log(80)
+        body = (
+            f"Daily pipeline completed with failures ({elapsed:.0f}s)\n"
+            f"Failed steps: {', '.join(failed)}\n\n"
+            f"Step results:\n"
+            + "\n".join(f"  {s:<20} [{'OK' if ok else 'FAILED'}]" for s, ok in results.items())
+            + "\n\n--- Log tail ---\n"
+            + log_tail
+        )
+        send_health_alert(
+            f"[Hire Assist] Pipeline failed: {', '.join(failed)}",
+            body,
+        )
+
+
+def _tail_pipeline_log(n_lines: int = 80) -> str:
+    """Read the last N lines of the pipeline log, best-effort."""
+    log_path = PROJECT_DIR / "data" / "logs" / "pipeline.log"
+    try:
+        if not log_path.exists():
+            return "(no pipeline.log found)"
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            # Read last ~32KB, which is plenty for 80 lines
+            read_size = min(size, 32 * 1024)
+            f.seek(size - read_size)
+            data = f.read().decode("utf-8", errors="replace")
+        lines = data.splitlines()
+        return "\n".join(lines[-n_lines:])
+    except Exception as e:
+        return f"(could not read log: {e})"
 
 
 if __name__ == "__main__":

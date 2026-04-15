@@ -1121,6 +1121,38 @@ def import_status(request: Request):
     return {"last_import": _last_import}
 
 
+@app.get("/admin/cron-status")
+def cron_status(request: Request):
+    """Report the last daily-refresh cron run (ATS sync + stats + alerts)."""
+    err, code = _check_admin(request)
+    if err:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(err, status_code=code)
+    try:
+        from cron_pipeline import read_last_run
+        last = read_last_run()
+    except Exception as e:
+        last = {"error": str(e)}
+    return {
+        "cron_enabled": os.environ.get("CRON_ENABLED", "").strip() == "1",
+        "cron_hour_utc": int(os.environ.get("CRON_HOUR", "5")),
+        "cron_minute_utc": int(os.environ.get("CRON_MINUTE", "0")),
+        "last_run": last,
+    }
+
+
+@app.post("/admin/run-cron")
+def admin_run_cron(request: Request, skip_alerts: bool = False):
+    """Manually trigger the cron pipeline. Useful for testing after deploy."""
+    err, code = _check_admin(request)
+    if err:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(err, status_code=code)
+    import cron_pipeline
+    result = cron_pipeline.run(skip_alerts=skip_alerts)
+    return result
+
+
 @app.get("/jobs")
 def jobs(
     company: str | None = Query(default=None),
@@ -3742,6 +3774,33 @@ def _start_keep_alive():
 
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(_self_ping, "interval", minutes=5)
+
+    # Daily refresh cron (ATS sync + stats + alerts) -- runs inside the deployed
+    # app so Railway keeps its own data fresh without depending on a local run.
+    # Gated by CRON_ENABLED=1 so local dev doesn't also run it.
+    if os.environ.get("CRON_ENABLED", "").strip() == "1":
+        from apscheduler.triggers.cron import CronTrigger
+        hour = int(os.environ.get("CRON_HOUR", "5"))     # default 05:00 UTC
+        minute = int(os.environ.get("CRON_MINUTE", "0"))
+
+        def _run_cron():
+            try:
+                import cron_pipeline
+                logger.info("Cron pipeline starting (hour=%d:%02d UTC)", hour, minute)
+                result = cron_pipeline.run()
+                logger.info("Cron pipeline finished: ok=%s failed=%s elapsed=%ss",
+                            result.get("ok"), result.get("failed_steps"),
+                            result.get("elapsed_sec"))
+            except Exception as e:
+                logger.exception("Cron pipeline crashed: %s", e)
+
+        scheduler.add_job(_run_cron, CronTrigger(hour=hour, minute=minute),
+                          id="daily_refresh", misfire_grace_time=3600,
+                          coalesce=True, max_instances=1)
+        logger.info("Daily refresh cron scheduled for %02d:%02d UTC", hour, minute)
+    else:
+        logger.info("CRON_ENABLED != 1 -- skipping daily refresh cron")
+
     scheduler.start()
     logger.info("Keep-alive scheduler started (every 5 min -> %s/ping)", public_url)
 

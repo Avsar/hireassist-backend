@@ -23,6 +23,10 @@ data/exports/
 tmp_*
 nul
 
+# Pipeline runtime state (not code)
+data/.pending_push.json
+data/.cron_last_run.json
+
 # Playwright browsers (installed via `playwright install`)
 ms-playwright/
 
