@@ -224,12 +224,24 @@ def init_db():
         elif count == 0:
             logger.warning("companies.db is empty and no seed CSV found — run discover.py")
 
-    # Auto-import bundle on cloud platforms (ephemeral filesystem = always fresh DB)
-    # Render sets RENDER=true; Railway sets RAILWAY_ENVIRONMENT
-    # Runs in background thread so the app can start accepting requests immediately
+    # Auto-import bundle on cloud platforms, but ONLY when the DB is empty.
+    # With a Railway Volume the DB is persistent, so re-importing the committed
+    # bundle on every boot would clobber fresher volume data (older last_seen_at,
+    # etc.). So we seed from the bundle only on a fresh/empty database.
+    # Render sets RENDER=true; Railway sets RAILWAY_ENVIRONMENT.
     is_cloud = (os.environ.get("RENDER", "").lower() in ("true", "1")
                 or os.environ.get("RAILWAY_ENVIRONMENT", "") != "")
-    if is_cloud and BUNDLE_SEED.exists():
+    db_is_empty = True
+    try:
+        with sqlite3.connect(DB_FILE) as _c:
+            has_jobs = _c.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
+            ).fetchone()
+            if has_jobs:
+                db_is_empty = _c.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    except Exception:
+        db_is_empty = True
+    if is_cloud and db_is_empty and BUNDLE_SEED.exists():
         def _bg_import():
             try:
                 bundle = json.loads(BUNDLE_SEED.read_text(encoding="utf-8"))
@@ -1142,14 +1154,17 @@ def cron_status(request: Request):
 
 
 @app.post("/admin/run-cron")
-def admin_run_cron(request: Request, skip_alerts: bool = False):
-    """Manually trigger the cron pipeline. Useful for testing after deploy."""
+def admin_run_cron(request: Request, skip_alerts: bool = False, full: bool = False):
+    """Manually trigger the cron pipeline. Useful for testing after deploy.
+
+    Pass ?full=true to also run discovery + career-page scraping (slow).
+    """
     err, code = _check_admin(request)
     if err:
         from fastapi.responses import JSONResponse
         return JSONResponse(err, status_code=code)
     import cron_pipeline
-    result = cron_pipeline.run(skip_alerts=skip_alerts)
+    result = cron_pipeline.run(skip_alerts=skip_alerts, full=full)
     return result
 
 
@@ -3783,11 +3798,13 @@ def _start_keep_alive():
         hour = int(os.environ.get("CRON_HOUR", "5"))     # default 05:00 UTC
         minute = int(os.environ.get("CRON_MINUTE", "0"))
 
+        full = os.environ.get("CRON_FULL", "").strip() == "1"
+
         def _run_cron():
             try:
                 import cron_pipeline
-                logger.info("Cron pipeline starting (hour=%d:%02d UTC)", hour, minute)
-                result = cron_pipeline.run()
+                logger.info("Cron pipeline starting (hour=%d:%02d UTC, full=%s)", hour, minute, full)
+                result = cron_pipeline.run(full=full)
                 logger.info("Cron pipeline finished: ok=%s failed=%s elapsed=%ss",
                             result.get("ok"), result.get("failed_steps"),
                             result.get("elapsed_sec"))
