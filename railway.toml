@@ -2,7 +2,9 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
+# No startCommand: the Dockerfile CMD (sh -c "... ${PORT}") handles startup so
+# $PORT is expanded by the shell. A startCommand here runs in exec form without
+# a shell, passing "$PORT" literally and breaking the bind.
 healthcheckPath = "/ping"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"
