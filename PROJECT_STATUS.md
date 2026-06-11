@@ -201,6 +201,26 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 20: Gem Accuracy v2 + Dead-Link Fix (Jun 11, 2026, late night)
+
+#### User testing found two real problems
+1. "Hidden gems" included jobs that ARE on LinkedIn (Lightspeed/Prodrive/Randstad topped the gem list)
+2. Prodrive apply links 404 — scraped Feb 25, never refreshed, never expired
+
+#### Fix 1: hidden scoring v2 (`job_intel.py`)
+- Career-page source alone no longer makes a gem: +45 (was 60); gem threshold raised to 70 — gems now require direct/small-ATS source AND small company (<25 active jobs)
+- `_STAFFING_MARKERS`: staffing agencies + job-board aggregators (Randstad, YoungCapital, DataJobs.nl, uitzend/werving/interim keywords...) capped at 20
+- `_BIG_POSTERS` expanded ~30 names (NXP, Signify, Wolters Kluwer, Lightspeed, Prosus, Nationale-Nederlanden...) with prefix matching (`_is_big_poster`) for legal-name suffixes
+- **This is the curation point**: false gem reported -> add lowercase company name to `_BIG_POSTERS`, fixes on next daily stats run
+- Result on test data: 2,317 -> 946 gems (fewer but true); top list now all genuine SMEs (Almos, Caldic, Itility, Axelera AI, SMART Photonics...)
+
+#### Fix 2: stale-job expiry (`job_intel.py`)
+- `deactivate_stale_jobs(days=14)` runs at the start of `compute_daily_stats()`: any job no sync/scrape has re-confirmed in 14 days goes inactive (re-activates automatically if seen again). Kills 404s at the root — 870 stale rows expired on test data.
+
+#### Fix 3: `verify_links.py` (new, run on Windows)
+- HEAD/GET-checks active careers_page job links, deactivates 404/410s, reports affected companies
+- `python verify_links.py --dry-run` / `--company "X"` / weekly as hygiene
+
 ### Session 19: Design Phase A+B — Site Redesign (Jun 11, 2026, night)
 
 #### Design system

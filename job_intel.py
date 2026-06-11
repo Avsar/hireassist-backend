@@ -294,6 +294,9 @@ def extract_tech_tags(title: str) -> str:
 # hidden_tier: 0 = unlabeled, 1 = "Low visibility", 2 = "Hidden gem"
 
 # Companies that syndicate widely (LinkedIn, Indeed, ...) regardless of size.
+# NOTE: this is the manual curation point -- when a "hidden gem" turns out to
+# be on LinkedIn, add the company name (lowercase) here and tiers fix on the
+# next daily stats run.
 _BIG_POSTERS = frozenset({
     "adyen", "booking.com", "booking", "uber", "uber nl", "mollie", "picnic",
     "asml", "philips", "ing", "abn amro", "rabobank", "kpn", "tomtom",
@@ -301,7 +304,27 @@ _BIG_POSTERS = frozenset({
     "optiver", "imc trading", "imc", "flow traders", "backbase", "miro",
     "catawiki", "just eat takeaway", "takeaway.com", "vinted", "elastic",
     "databricks", "stripe", "mongodb", "gitlab", "datadog", "salesforce",
+    # large multinationals whose NL job subset is small in our index but who
+    # absolutely post everywhere
+    "nxp", "nxp semiconductors", "signify", "wolters kluwer",
+    "zebra technologies", "zebra technologies netherlands b.v.",
+    "dsm", "shell", "unilever", "heineken", "akzonobel", "akzo nobel",
+    "kpmg", "deloitte", "pwc", "ey", "capgemini", "accenture", "atos",
+    "sogeti", "tcs", "infosys", "cognizant", "ibm", "microsoft", "google",
+    "amazon", "lightspeed", "vanderlande", "daf trucks", "daf",
+    "prosus", "channable", "marel", "marel poultry",
+    "orange cyberdefense", "orange cyberdefense netherlands",
+    "anglo american", "anglo american marketing b.v.", "credendo",
+    "nationale-nederlanden", "nationale nederlanden", "db cargo",
 })
+
+
+def _is_big_poster(name: str) -> bool:
+    """Exact match, or prefix match for entries long enough to be unambiguous
+    (handles legal-name suffixes like 'Credendo - Trade Credit Insurance NV')."""
+    if name in _BIG_POSTERS:
+        return True
+    return any(len(b) >= 5 and name.startswith(b) for b in _BIG_POSTERS)
 
 # ATS platforms used overwhelmingly by small Dutch companies.
 _SMALL_ATS_SOURCES = frozenset({"recruitee", "homerun"})
@@ -309,23 +332,49 @@ _SMALL_ATS_SOURCES = frozenset({"recruitee", "homerun"})
 # Sources that are direct career-page finds (our moat -- never syndicated by us).
 _DIRECT_SOURCES = frozenset({"careers_page", "web_search"})
 
+# Staffing/temp agencies syndicate aggressively -- their jobs are never "hidden",
+# regardless of which source we found them through.
+_STAFFING_MARKERS = (
+    "randstad", "youngcapital", "young capital", "adecco", "manpower",
+    "tempo-team", "tempo team", "olympia", "uitzend", "staffing",
+    "recruitment", "werving", "detacher", "interim", "payroll",
+    "brunel", "yacht", "hays", "michael page", "sd worx", "asa talent",
+    "actief werkt", "eastmen", "human capital", "human-capital",
+    "personeel", "flexwerk", "jobcoach",
+    # job boards / aggregators masquerading as companies
+    "datajobs", "jobboard", "job board", "vacaturebank", "vacatures.",
+    "werkzoeken", "monsterboard", "indeed",
+)
+
+
+def _is_staffing(name: str) -> bool:
+    n = (name or "").lower()
+    return any(m in n for m in _STAFFING_MARKERS)
+
 
 def compute_hidden_score(source: str, company_active_jobs: int, company_name: str = "") -> int:
-    """Score 0-100: how likely this job is NOT visible on big job boards."""
+    """Score 0-100: how likely this job is NOT visible on big job boards.
+
+    v2 (2026-06-12): a career-page source alone no longer makes a gem --
+    companies with large job counts (Lightspeed, Prodrive) cross-post to
+    LinkedIn even though we scrape them directly. Gems now require BOTH a
+    direct/small-ATS source AND a small active-job count.
+    """
     score = 0
     if source in _DIRECT_SOURCES:
-        score += 60
+        score += 45
     elif source in _SMALL_ATS_SOURCES:
         score += 25
 
     if company_active_jobs < 10:
-        score += 30
+        score += 35
     elif company_active_jobs < 25:
-        score += 20
+        score += 25
     elif company_active_jobs < 50:
         score += 10
 
-    if (company_name or "").strip().lower() in _BIG_POSTERS:
+    name = (company_name or "").strip().lower()
+    if _is_big_poster(name) or _is_staffing(name):
         score = min(score, 20)
 
     return min(score, 100)
@@ -333,7 +382,7 @@ def compute_hidden_score(source: str, company_active_jobs: int, company_name: st
 
 def hidden_tier_from_score(score: int) -> int:
     """2 = Hidden gem, 1 = Low visibility, 0 = unlabeled."""
-    if score >= 60:
+    if score >= 70:
         return 2
     if score >= 35:
         return 1
@@ -492,6 +541,25 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
 # D) Daily stats computation
 # ---------------------------------------------------------------------------
 
+def deactivate_stale_jobs(conn: sqlite3.Connection, days: int = 14) -> int:
+    """Expire jobs not re-confirmed by any sync/scrape for *days* days.
+
+    Safety net against dead apply links: when a company's scrape silently
+    fails for weeks (e.g. Prodrive, stale since Feb), its old jobs otherwise
+    stay active forever and 404 when users click Apply. A job whose
+    last_seen_at hasn't refreshed in 2 weeks is almost certainly gone --
+    and if it isn't, the next successful sync re-activates it (upsert sets
+    is_active=1 on every re-encounter).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    result = conn.execute(
+        "UPDATE jobs SET is_active = 0 WHERE is_active = 1 AND last_seen_at < ?",
+        (cutoff,),
+    )
+    conn.commit()
+    return result.rowcount
+
+
 def compute_daily_stats(conn: sqlite3.Connection, stat_date: str | None = None):
     """Compute and store daily stats for every (company, source) pair.
 
@@ -500,6 +568,15 @@ def compute_daily_stats(conn: sqlite3.Connection, stat_date: str | None = None):
     """
     if stat_date is None:
         stat_date = date.today().isoformat()
+
+    # Expire jobs that no sync has re-confirmed in 2 weeks (dead-link guard)
+    try:
+        stale = deactivate_stale_jobs(conn, days=14)
+        if stale:
+            import logging
+            logging.getLogger(__name__).info("Deactivated %d stale jobs (>14d unseen)", stale)
+    except Exception:
+        pass
 
     next_day = (date.fromisoformat(stat_date) + timedelta(days=1)).isoformat()
     prev_date = (date.fromisoformat(stat_date) - timedelta(days=1)).isoformat()
