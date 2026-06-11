@@ -1523,12 +1523,17 @@ def jobs(
     english_only: bool = Query(default=False),
     new_today_only: bool = Query(default=False),
     hidden: bool = Query(default=False),
+    sort: str = Query(default="newest"),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=100, ge=1, le=500),
 ):
     """Job listings. Defaults to Netherlands; pass country=all for everything.
-    hidden=true returns only jobs unlikely to appear on big job boards."""
+    hidden=true returns only jobs unlikely to appear on big job boards.
+    sort: newest (default) or company."""
     all_jobs = [j for j in aggregate_jobs(company, q, country, city, english_only, new_today_only, hidden=hidden) if not j.get("_placeholder")]
+    if sort == "newest":
+        # sorted() copies -- never mutate the shared cache entry
+        all_jobs = sorted(all_jobs, key=lambda j: j.get("updated_at") or "", reverse=True)
     total = len(all_jobs)
     start = (page - 1) * per_page
     page_jobs = all_jobs[start:start + per_page]

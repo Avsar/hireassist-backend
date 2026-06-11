@@ -201,6 +201,26 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 19: Design Phase A+B — Site Redesign (Jun 11, 2026, night)
+
+#### Design system
+- **DESIGN.md** created (SourceJobsNL root): goal, diagnosis, principles, tokens (blue-600 primary / fuchsia-600 gems-only / Sora headings / flat heroes / no rest shadows), navigation architecture, phased plan, measurable definition of done
+
+#### Phase A — structural (shipped with B)
+- `(portal)` route group: shared sticky SiteHeader (Jobs / 💎 Hidden gems / Companies / Blog / ★ Saved / For employers, mobile sheet) + SiteFooter (product links, 8 city links for SEO interlinking, contact, mission line) on /, /jobs, /companies, /hidden-gems, /privacy
+- Job listings open in new tabs everywhere; root metadata repositioned to job search ("Dutch tech jobs, including the hidden ones"); gradients flattened
+
+#### Phase B — redesign
+- **New homepage** (replaces recruiting-led Landing; marketing stays on /recruiters): Sora hero "Find the jobs nobody else shows you", search form posting to /jobs, live stats (total/gems/companies), 3-step how-it-works, 6 freshest gems, 8 city tiles, slim employer strip
+- **/jobs**: sticky left filter rail (vertical JobFilters: search, city, Show-me toggles, reset), result-count header with active-filter summary, skeleton loading.tsx, newest-first ordering
+- **Backend**: `sort=newest|company` param on /jobs (sorted copy, cache-safe)
+- **Job detail**: two-column — description left, sticky apply card right (apply, save, quick facts, "All jobs at {company}" link to profile); description fallback copy when empty; related grid 2-col
+- **/companies**: client-side CompanyDirectory (name/city filter + gems-only toggle)
+- **Deterministic logo colors**: `logoColor(name)` — 8-color palette hashed per company, used in cards/profiles/home
+
+#### Verified in sandbox (build + runtime)
+- Home/jobs/detail/companies/hidden-gems/city/recruiters/blog all 200 with expected content
+
 ### Session 18: Phase 3 Milestone 2 — Company Pages, Hidden-Gems Landing, City Pages (Jun 11, 2026, evening)
 
 #### Backend (project/app.py)
