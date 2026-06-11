@@ -201,6 +201,27 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 16: Phase 4 Milestone 1 — Job Alerts UI + Saved Jobs + Privacy (Jun 11, 2026)
+
+#### Discovery: alert backend already existed
+- `job_alerts.py` already had double opt-in, confirm/unsubscribe tokens, filter matching, digest HTML, SMTP + Resend support, and the daily cron sends digests. Phase 4 M1 = exposing it on the new frontend.
+
+#### Backend (project/)
+- `job_alerts.py`: `hidden` filter support in `match_jobs_for_alert()` (hidden_tier >= 1) + "Hidden gems only" in digest filter summary. Enables hidden-gems-only alert subscriptions.
+
+#### Frontend (hireassit-cubeA/)
+- `src/app/api/job-alert/route.ts` — server-side proxy to Railway `/api/alerts` (no CORS needed)
+- `AlertSignup.tsx` on /jobs — captures active search filters (q/city/hidden/english) into the subscription; double-opt-in note + privacy link
+- Saved jobs: `lib/savedJobs.ts` (localStorage, no account), `SaveButton` on job detail pages, `/jobs/saved` page, "★ Saved jobs" link on /jobs
+- `/privacy` page — what's collected (email+filters only), deletion via success@cubea.nl, localStorage disclosure
+
+#### Verified in sandbox (local API + next build + next start)
+- Alert subscribe 200 ("Check your email"), invalid email 400, hidden-gem matcher returns matches, save button + saved page + privacy all render
+
+#### Deploy notes
+- **Railway must have email env vars set** for confirmations/digests to actually send: either `RESEND_API_KEY` or `SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM` (values in local .env). Test after deploy: `/api/alerts/smtp-test`
+- Cron sends digests daily (skip_alerts=False by default in scheduled runs)
+
 ### Session 15: Phase 3 Milestone 1 — Next.js Job Search + SEO Pages (Jun 11, 2026)
 
 #### Backend (project/)

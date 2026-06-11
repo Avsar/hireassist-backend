@@ -251,6 +251,10 @@ def match_jobs_for_alert(conn: sqlite3.Connection, filters: dict, today: str | N
         clauses.append("LOWER(title) LIKE ?")
         params.append(f"%{q.lower()}%")
 
+    # Hidden gems only (career-page scrapes + low-visibility small companies)
+    if filters.get("hidden"):
+        clauses.append("hidden_tier >= 1")
+
     where = " AND ".join(clauses)
     rows = conn.execute(f"SELECT * FROM jobs WHERE {where} ORDER BY company_name, title", params).fetchall()
 
@@ -322,6 +326,8 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
         parts.append(f'Tech: {filters["tech"]}')
     if filters.get("english_only"):
         parts.append("English only")
+    if filters.get("hidden"):
+        parts.append("Hidden gems only")
     filter_summary = ", ".join(parts) if parts else "All jobs in Netherlands"
 
     # Job rows (max 25)
