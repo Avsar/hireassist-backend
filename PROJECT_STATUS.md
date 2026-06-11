@@ -201,6 +201,31 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 15: Phase 3 Milestone 1 — Next.js Job Search + SEO Pages (Jun 11, 2026)
+
+#### Backend (project/)
+- `jobs.description` column (idempotent migration); captured at sync, capped 1,500 chars plain text. Sources: Greenhouse `content` (entity-unescaped), Lever `description`, Recruitee `description`, Ashby `descriptionHtml`, HomeRun Atom `summary`. SmartRecruiters + careers_page have none (boilerplate fallback in frontend JSON-LD). Existing rows fill on next sync.
+- `GET /jobs/{id}` — full job detail incl. description, hidden_tier, related jobs (same company, max 5). Inactive jobs return 200 + is_active=0 (frontend shows "no longer listed").
+- `GET /meta/sitemap-jobs` — {id, slug, lastmod} for all active jobs.
+- `/jobs` list items now include `id` + `slug` (`{title}-at-{company}-{id}`, lookup by trailing id).
+- Bundle export/import carries `description`.
+
+#### Frontend (hireassit-cubeA/, deploys to Vercel)
+- `src/lib/hireassist.ts` — typed API client (HIREASSIST_API_URL env, defaults to Railway prod; ISR revalidate 10min list / 1h detail / 24h sitemap)
+- `/jobs` — SSR search page: keyword + city + Hidden gems / English / New today pills, pagination, gradient hero with live count
+- `/jobs/[slug]` — SEO detail page: generateMetadata, **JobPosting JSON-LD (Google Jobs)**, hidden-gem badges, description, Apply CTA (direct, nofollow), related jobs, noindex+gone-state for inactive
+- `app/sitemap.ts` — daily-regenerated sitemap (~13.8k job URLs), `app/robots.ts`
+- Nav: "HireAssist Alpha" -> "Jobs" (/jobs) in Landing + RecruiterLanding; `/tools/hireassist-alpha` 308-redirects to `/jobs`
+
+#### Verified end-to-end in sandbox
+- Local uvicorn (test DB) + `next build` + `next start`: search 200 (25 cards), detail 200 with JSON-LD + apply button, hidden filter, sitemap 13,802 URLs, alpha redirect 308, bad slug 404
+
+#### Deploy notes
+- Frontend fetches are server-side -> no Railway CORS change needed
+- Vercel env (optional): `NEXT_PUBLIC_SITE_URL=https://cubea.nl`; `HIREASSIST_API_URL` only to override the baked-in Railway URL
+- After deploy: submit https://cubea.nl/sitemap.xml in Google Search Console
+- Descriptions populate after the next daily cron (or manual /admin/run-cron)
+
 ### Session 14: Phase 2 Start — Ashby + HomeRun ATS Support (Jun 11, 2026)
 
 #### Two New Job Sources (now 6 ATS platforms + career pages)

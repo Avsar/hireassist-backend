@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 from db_config import get_db_path
-from html import escape
+from html import escape, unescape
 from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlparse
@@ -138,21 +138,23 @@ def _import_bundle_data(data: dict) -> dict:
             conn.executemany(
                 """INSERT INTO jobs (source, company_name, job_key, title, location_raw,
                       country, city, url, posted_at, first_seen_at, last_seen_at, is_active, raw_json,
-                      hidden_score, hidden_tier)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      hidden_score, hidden_tier, description)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(source, job_key) DO UPDATE SET
                      company_name=excluded.company_name, title=excluded.title,
                      location_raw=excluded.location_raw, country=excluded.country,
                      city=excluded.city, url=excluded.url, posted_at=excluded.posted_at,
                      last_seen_at=excluded.last_seen_at, is_active=excluded.is_active,
                      raw_json=excluded.raw_json,
-                     hidden_score=excluded.hidden_score, hidden_tier=excluded.hidden_tier""",
+                     hidden_score=excluded.hidden_score, hidden_tier=excluded.hidden_tier,
+                     description=excluded.description""",
                 [(r["source"], r["company_name"], r["job_key"], r["title"],
                   r.get("location_raw", ""), r.get("country"), r.get("city"),
                   r.get("url", ""), r.get("posted_at"),
                   r["first_seen_at"], r["last_seen_at"],
                   r.get("is_active", 1), r.get("raw_json"),
-                  r.get("hidden_score", 0), r.get("hidden_tier", 0)) for r in rows],
+                  r.get("hidden_score", 0), r.get("hidden_tier", 0),
+                  r.get("description", "")) for r in rows],
             )
         summary["jobs"] = len(rows)
 
@@ -553,6 +555,7 @@ def homerun_list_jobs(company_slug: str, max_pages: int = 40):
                 link = entry.find("link")
                 updated = entry.find("updated")
                 loc = entry.find("location") or entry.find("city")
+                summary = entry.find("summary") or entry.find("content")
                 url = link.get("href", "") if link else ""
                 if title and url:
                     jobs.append({
@@ -560,6 +563,7 @@ def homerun_list_jobs(company_slug: str, max_pages: int = 40):
                         "url": url,
                         "location": loc.get_text(strip=True) if loc else "",
                         "updated_at": updated.get_text(strip=True) if updated else "",
+                        "summary": summary.get_text(strip=True) if summary else "",
                     })
             if jobs:
                 return jobs
@@ -616,6 +620,17 @@ def homerun_list_jobs(company_slug: str, max_pages: int = 40):
 # ----------------------------
 def html_to_text(html: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html or "")).strip()
+
+
+def make_description(html: str, max_len: int = 1500) -> str:
+    """Plain-text job description for SEO/detail pages (capped)."""
+    if not html:
+        return ""
+    # Greenhouse returns entity-escaped HTML; unescape before stripping tags
+    if "&lt;" in html and "<" not in html:
+        html = unescape(html)
+    text = html_to_text(html)
+    return text[:max_len]
 
 
 def make_snippet(html: str, max_len: int = 220) -> str:
@@ -1000,6 +1015,14 @@ def unique(values):
     return sorted({v for v in values if v})
 
 
+def job_slug(company: str, title: str, job_id: int) -> str:
+    """SEO slug: 'senior-engineer-at-adyen-12345'. The trailing id is what
+    the API uses for lookup; the rest is cosmetic/SEO."""
+    base = f"{title} at {company}"
+    s = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
+    return f"{s[:80].rstrip('-')}-{job_id}"
+
+
 def soft_country_match(job, country: str):
     if not country:
         return True
@@ -1048,6 +1071,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "department": depts[0].get("name", "") if depts else "",
                 "job_type": "",
                 "snippet": "",
+                "description": make_description(j.get("content", "") or ""),
                 "location_raw": loc_raw,
                 "city": city,
                 "country": country,
@@ -1078,6 +1102,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "department": cats.get("department", "") or "",
                 "job_type": cats.get("commitment", "") or "",
                 "snippet": make_snippet(j.get("description", "") or ""),
+                "description": make_description(j.get("description", "") or j.get("descriptionPlain", "") or ""),
                 "location_raw": loc_raw,
                 "city": city,
                 "country": country,
@@ -1134,6 +1159,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "department": j.get("department", "") or j.get("category", "") or "",
                 "job_type": emp_type,
                 "snippet": make_snippet(j.get("description", "") or ""),
+                "description": make_description(j.get("description", "") or ""),
                 "location_raw": loc_raw,
                 "city": city,
                 "country": country,
@@ -1168,6 +1194,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "department": j.get("department", "") or j.get("team", "") or "",
                 "job_type": emp,
                 "snippet": "",
+                "description": make_description(j.get("descriptionHtml", "") or ""),
                 "location_raw": loc_raw,
                 "city": city,
                 "country": country,
@@ -1194,6 +1221,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "department": "",
                 "job_type": "",
                 "snippet": "",
+                "description": make_description(j.get("summary", "") or ""),
                 "location_raw": loc_raw,
                 "city": city,
                 "country": country,
@@ -1282,6 +1310,8 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
     all_jobs = []
     for r in rows:
         all_jobs.append({
+            "id": r["id"],
+            "slug": job_slug(r["company_name"], r["title"], r["id"]),
             "company": r["company_name"],
             "source": r["source"],
             "title": r["title"],
@@ -1456,6 +1486,76 @@ def jobs(
     start = (page - 1) * per_page
     page_jobs = all_jobs[start:start + per_page]
     return {"count": total, "page": page, "per_page": per_page, "pages": (total + per_page - 1) // per_page if total else 0, "jobs": page_jobs}
+
+
+@app.get("/jobs/{job_id}")
+def job_detail(job_id: int):
+    """Single job for the detail page. Inactive jobs return is_active=0
+    (frontend shows a 'no longer available' state -- better for SEO than 404)."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+        r = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if not r:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+
+        cols = r.keys()
+        job = {
+            "id": r["id"],
+            "slug": job_slug(r["company_name"], r["title"], r["id"]),
+            "company": r["company_name"],
+            "source": r["source"],
+            "title": r["title"],
+            "department": r["department"] or "",
+            "job_type": r["job_type"] or "",
+            "location_raw": r["location_raw"] or "",
+            "city": _normalize_city(r["city"]) or "",
+            "country": r["country"] or "",
+            "apply_url": r["url"] or "",
+            "description": (r["description"] if "description" in cols else "") or "",
+            "tech_tags": (r["tech_tags"] if "tech_tags" in cols else "") or "",
+            "hidden_tier": (r["hidden_tier"] if "hidden_tier" in cols else 0) or 0,
+            "posted_at": r["posted_at"] or r["first_seen_at"] or "",
+            "first_seen_at": r["first_seen_at"],
+            "last_seen_at": r["last_seen_at"],
+            "is_active": r["is_active"],
+        }
+        related = conn.execute(
+            """SELECT id, title, company_name, city FROM jobs
+               WHERE company_name = ? AND is_active = 1 AND id != ?
+               ORDER BY first_seen_at DESC LIMIT 5""",
+            (r["company_name"], job_id),
+        ).fetchall()
+        job["related"] = [
+            {"id": x["id"], "title": x["title"],
+             "slug": job_slug(x["company_name"], x["title"], x["id"]),
+             "city": x["city"] or ""}
+            for x in related
+        ]
+    return job
+
+
+@app.get("/meta/sitemap-jobs")
+def sitemap_jobs():
+    """Lightweight list of all active jobs for sitemap generation:
+    [{id, slug, lastmod}]. Cached upstream by the frontend (revalidates daily)."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+        rows = conn.execute(
+            "SELECT id, company_name, title, last_seen_at FROM jobs WHERE is_active = 1"
+        ).fetchall()
+    return {
+        "count": len(rows),
+        "jobs": [
+            {"id": r["id"],
+             "slug": job_slug(r["company_name"], r["title"], r["id"]),
+             "lastmod": (r["last_seen_at"] or "")[:10]}
+            for r in rows
+        ],
+    }
 
 
 @app.get("/ping")

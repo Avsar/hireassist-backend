@@ -73,7 +73,8 @@ def ensure_intel_tables(conn: sqlite3.Connection):
 
     # Migration: add department + job_type columns (idempotent)
     for col, col_def in [("department", "TEXT DEFAULT ''"), ("job_type", "TEXT DEFAULT ''"), ("tech_tags", "TEXT DEFAULT ''"),
-                         ("hidden_score", "INTEGER DEFAULT 0"), ("hidden_tier", "INTEGER DEFAULT 0")]:
+                         ("hidden_score", "INTEGER DEFAULT 0"), ("hidden_tier", "INTEGER DEFAULT 0"),
+                         ("description", "TEXT DEFAULT ''")]:
         try:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_def}")
         except sqlite3.OperationalError:
@@ -438,6 +439,7 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
         # the daily recompute_hidden_tiers() pass refines it with size signals.
         h_score = compute_hidden_score(source, 999, company_name)
         h_tier = hidden_tier_from_score(h_score)
+        description = (jd.get("description") or "")[:1500]
 
         existing = conn.execute(
             "SELECT id, is_active FROM jobs WHERE source=? AND job_key=?",
@@ -449,11 +451,13 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
                 """UPDATE jobs SET
                     title=?, location_raw=?, country=?, city=?, url=?,
                     department=?, job_type=?, tech_tags=?,
+                    description=CASE WHEN ?!='' THEN ? ELSE description END,
                     posted_at=COALESCE(?, posted_at),
                     last_seen_at=?, is_active=1
                 WHERE source=? AND job_key=?""",
                 (title, location_raw, country, city, url,
                  department, job_type, tech_tags,
+                 description, description,
                  posted_at, now, source, job_key),
             )
             stats["updated"] += 1
@@ -462,11 +466,11 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
                 """INSERT INTO jobs
                     (source, company_name, job_key, title, location_raw, country, city,
                      url, department, job_type, tech_tags, hidden_score, hidden_tier,
-                     posted_at, first_seen_at, last_seen_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                     description, posted_at, first_seen_at, last_seen_at, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (source, company_name, job_key, title, location_raw, country, city,
                  url, department, job_type, tech_tags, h_score, h_tier,
-                 posted_at, now, now),
+                 description, posted_at, now, now),
             )
             stats["new"] += 1
 
