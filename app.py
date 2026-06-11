@@ -1303,7 +1303,13 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
 
         where = " AND ".join(clauses)
         rows = conn.execute(
-            f"SELECT * FROM jobs WHERE {where} ORDER BY company_name, title",
+            # Explicit slim column list: description (up to 1.5KB/row) and raw_json
+            # must NEVER be pulled here -- 13k+ rows per query would drag ~20MB
+            # out of SQLite on every search and time out the frontend.
+            f"""SELECT id, source, company_name, title, location_raw, country, city,
+                       url, posted_at, first_seen_at, department, job_type,
+                       tech_tags, hidden_tier
+                FROM jobs WHERE {where} ORDER BY company_name, title""",
             params,
         ).fetchall()
 
