@@ -201,6 +201,25 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 18: Phase 3 Milestone 2 — Company Pages, Hidden-Gems Landing, City Pages (Jun 11, 2026, evening)
+
+#### Backend (project/app.py)
+- `company_slug()` helper
+- `GET /companies?min_jobs=` — directory (name, slug, active_jobs, hidden_gems, new_this_week, main_city), one GROUP BY query
+- `GET /companies/{slug}` — profile: stats, hidden_share %, cities, 30d history (job_intel), full active job list with job slugs; 404 on unknown slug
+- `GET /stats/hidden-summary` — totals + top-12 hidden-gem companies + 12 freshest gems (for landing page)
+
+#### Frontend (hireassit-cubeA/)
+- `/companies` — directory grid (702 companies), gem/new-this-week badges
+- `/companies/[slug]` — profile: stat cards (open / gems / % not on big boards), 30-day SVG history bars, job list
+- `/hidden-gems` — landing page: purple hero with live counts, "why hidden" SEO copy, top companies, freshest gems
+- City landing pages at `/jobs/{city}` (eindhoven, amsterdam, +14 more) via slug fallback in `/jobs/[slug]` — slugs without a trailing job id that match CITY_PAGES render a city page with metadata + top 50 jobs
+- Sitemap now: 8 static + 16 city + 702 company + ~13.8k job URLs; cross-links on /jobs (Hidden gems, Companies)
+- `fetchHiddenSummary` hardened to never throw (build resilience, lesson from Session 17)
+
+#### Verified in sandbox (build + runtime)
+- All pages 200 with real content; Eindhoven city page shows 373 jobs with gem badges; sitemap counts verified per-type
+
 ### Session 17: INCIDENT — Production Overload + Fixes (Jun 11, 2026, evening)
 
 #### What happened (causal chain)

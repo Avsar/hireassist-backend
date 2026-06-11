@@ -1019,6 +1019,12 @@ def unique(values):
     return sorted({v for v in values if v})
 
 
+def company_slug(name: str) -> str:
+    """URL slug for a company profile page: 'Sioux Technologies' -> 'sioux-technologies'."""
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return s[:80].rstrip("-") or "company"
+
+
 def job_slug(company: str, title: str, job_id: int) -> str:
     """SEO slug: 'senior-engineer-at-adyen-12345'. The trailing id is what
     the API uses for lookup; the rest is cosmetic/SEO."""
@@ -1575,6 +1581,138 @@ def job_detail(job_id: int):
             for x in related
         ]
     return job
+
+
+@app.get("/companies")
+def companies_list(min_jobs: int = Query(default=1, ge=0)):
+    """Company directory: active job counts, hidden-gem counts, slugs.
+    Sorted by active jobs descending."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+        rows = conn.execute(
+            """SELECT company_name,
+                      COUNT(*) AS active_jobs,
+                      SUM(CASE WHEN hidden_tier >= 2 THEN 1 ELSE 0 END) AS hidden_gems,
+                      SUM(CASE WHEN DATE(first_seen_at) >= DATE('now', '-7 days') THEN 1 ELSE 0 END) AS new_this_week,
+                      GROUP_CONCAT(DISTINCT city) AS cities
+               FROM jobs WHERE is_active = 1
+               GROUP BY company_name
+               HAVING active_jobs >= ?
+               ORDER BY active_jobs DESC""",
+            (min_jobs,),
+        ).fetchall()
+    companies = []
+    for r in rows:
+        cities = [c for c in (r["cities"] or "").split(",") if c and c.strip()]
+        companies.append({
+            "name": r["company_name"],
+            "slug": company_slug(r["company_name"]),
+            "active_jobs": r["active_jobs"],
+            "hidden_gems": r["hidden_gems"] or 0,
+            "new_this_week": r["new_this_week"] or 0,
+            "main_city": cities[0] if cities else "",
+        })
+    return {"count": len(companies), "companies": companies}
+
+
+@app.get("/companies/{slug}")
+def company_detail(slug: str):
+    """Company profile: stats, hiring history (30d), and active jobs."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+        # Resolve slug -> company_name (companies with active jobs only)
+        names = conn.execute(
+            "SELECT DISTINCT company_name FROM jobs WHERE is_active = 1"
+        ).fetchall()
+        name = next((r["company_name"] for r in names
+                     if company_slug(r["company_name"]) == slug), None)
+        if not name:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+
+        job_rows = conn.execute(
+            """SELECT id, title, location_raw, city, country, job_type,
+                      tech_tags, hidden_tier, posted_at, first_seen_at, url, source
+               FROM jobs WHERE company_name = ? AND is_active = 1
+               ORDER BY first_seen_at DESC""",
+            (name,),
+        ).fetchall()
+
+        history = []
+        if _HAS_INTEL:
+            try:
+                history = job_intel.get_company_history(conn, name, days=30)
+            except Exception:
+                history = []
+
+    jobs = [{
+        "id": r["id"],
+        "slug": job_slug(name, r["title"], r["id"]),
+        "title": r["title"],
+        "city": _normalize_city(r["city"]) or "",
+        "country": r["country"] or "",
+        "location_raw": r["location_raw"] or "",
+        "job_type": r["job_type"] or "",
+        "tech_tags": r["tech_tags"] or "",
+        "hidden_tier": r["hidden_tier"] or 0,
+        "first_seen_at": r["first_seen_at"],
+    } for r in job_rows]
+
+    hidden_gems = sum(1 for j in jobs if j["hidden_tier"] >= 2)
+    return {
+        "name": name,
+        "slug": slug,
+        "active_jobs": len(jobs),
+        "hidden_gems": hidden_gems,
+        "hidden_share": round(hidden_gems / len(jobs) * 100) if jobs else 0,
+        "cities": unique([j["city"] for j in jobs if j["city"]]),
+        "history": history,
+        "jobs": jobs,
+    }
+
+
+@app.get("/stats/hidden-summary")
+def hidden_summary():
+    """Aggregates for the /hidden-gems landing page."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+        totals = conn.execute(
+            """SELECT SUM(CASE WHEN hidden_tier >= 2 THEN 1 ELSE 0 END) AS gems,
+                      SUM(CASE WHEN hidden_tier = 1 THEN 1 ELSE 0 END) AS low_vis,
+                      COUNT(*) AS total
+               FROM jobs WHERE is_active = 1"""
+        ).fetchone()
+        top_rows = conn.execute(
+            """SELECT company_name, COUNT(*) AS gems
+               FROM jobs WHERE is_active = 1 AND hidden_tier >= 2
+               GROUP BY company_name ORDER BY gems DESC LIMIT 12"""
+        ).fetchall()
+        recent_rows = conn.execute(
+            """SELECT id, company_name, title, city
+               FROM jobs WHERE is_active = 1 AND hidden_tier >= 2
+               ORDER BY first_seen_at DESC LIMIT 12"""
+        ).fetchall()
+    return {
+        "hidden_gems": totals["gems"] or 0,
+        "low_visibility": totals["low_vis"] or 0,
+        "total_active": totals["total"] or 0,
+        "top_companies": [
+            {"name": r["company_name"], "slug": company_slug(r["company_name"]),
+             "hidden_gems": r["gems"]}
+            for r in top_rows
+        ],
+        "recent_gems": [
+            {"id": r["id"], "title": r["title"], "company": r["company_name"],
+             "city": _normalize_city(r["city"]) or "",
+             "slug": job_slug(r["company_name"], r["title"], r["id"])}
+            for r in recent_rows
+        ],
+    }
 
 
 @app.get("/meta/sitemap-jobs")
