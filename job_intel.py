@@ -303,7 +303,7 @@ _BIG_POSTERS = frozenset({
 })
 
 # ATS platforms used overwhelmingly by small Dutch companies.
-_SMALL_ATS_SOURCES = frozenset({"recruitee"})
+_SMALL_ATS_SOURCES = frozenset({"recruitee", "homerun"})
 
 # Sources that are direct career-page finds (our moat -- never syndicated by us).
 _DIRECT_SOURCES = frozenset({"careers_page", "web_search"})
@@ -379,7 +379,7 @@ def make_job_key(source: str, job_dict: dict) -> str:
     ATS sources use the provider's unique ID.
     Scraped/careers_page jobs use sha1(company|title|normalized_url).
     """
-    if source in ("greenhouse", "lever", "smartrecruiters", "recruitee"):
+    if source in ("greenhouse", "lever", "smartrecruiters", "recruitee", "ashby"):
         jid = job_dict.get("id")
         if jid is not None:
             return str(jid)

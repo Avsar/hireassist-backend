@@ -22,7 +22,7 @@ from db_config import get_db_path
 DB_FILE = get_db_path()
 from job_intel import ensure_intel_tables, upsert_jobs
 
-ATS_SOURCES = {"greenhouse", "lever", "smartrecruiters", "recruitee"}
+ATS_SOURCES = {"greenhouse", "lever", "smartrecruiters", "recruitee", "ashby", "homerun"}
 
 
 def sync_all(company_filter: str | None = None, dry_run: bool = False):

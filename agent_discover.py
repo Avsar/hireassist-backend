@@ -154,11 +154,52 @@ def probe_recruitee(token: str) -> int | None:
     return None
 
 
+def probe_ashby(token: str) -> int | None:
+    """Ashby public posting API. Token = job board name (usually company slug)."""
+    try:
+        r = SESSION.get(
+            f"https://api.ashbyhq.com/posting-api/job-board/{token}",
+            timeout=15,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, dict) and "jobs" in data:
+                return len(data["jobs"])
+    except Exception:
+        pass
+    return None
+
+
+def probe_homerun(token: str) -> int | None:
+    """HomeRun (Dutch ATS). Token = subdomain slug on homerun.co.
+    Tries the public Atom feed first, then the career-site sitemap."""
+    try:
+        r = SESSION.get(f"https://feed.homerun.co/{token}", timeout=15)
+        if r.status_code == 200 and b"<entry" in r.content:
+            return r.content.count(b"<entry")
+    except Exception:
+        pass
+    try:
+        r = SESSION.get(f"https://{token}.homerun.co/sitemap.xml", timeout=15)
+        if r.status_code == 200 and b"<loc>" in r.content:
+            # Rough job count: sitemap locs minus homepage/apply pages
+            locs = re.findall(rb"<loc>([^<]+)</loc>", r.content)
+            job_locs = [u for u in locs
+                        if not u.rstrip(b"/").endswith(b".homerun.co")
+                        and not u.rstrip(b"/").endswith(b"apply")]
+            return len(job_locs)
+    except Exception:
+        pass
+    return None
+
+
 PROBERS = {
     "greenhouse": probe_greenhouse,
     "lever": probe_lever,
     "smartrecruiters": probe_smartrecruiters,
     "recruitee": probe_recruitee,
+    "ashby": probe_ashby,
+    "homerun": probe_homerun,
 }
 
 
@@ -271,6 +312,24 @@ def _fetch_board_name(source: str, token: str) -> str | None:
 
         elif source == "recruitee":
             # Recruitee: the token IS the subdomain, so it's self-verifying
+            return token
+
+        elif source == "ashby":
+            # Ashby: the token IS the public board slug, self-verifying
+            return token
+
+        elif source == "homerun":
+            # HomeRun: fetch the career page title (e.g. "Jobs at Dopper")
+            r = SESSION.get(f"https://{token}.homerun.co/", timeout=10)
+            if r.status_code == 200:
+                m = re.search(r"<title>([^<]+)</title>", r.text, re.IGNORECASE)
+                if m:
+                    title = m.group(1)
+                    # Strip common prefixes/suffixes: "Jobs at X", "X - Vacatures"
+                    title = re.sub(r"^(jobs?\s+(at|bij)|werken\s+bij|vacatures?\s+(at|bij)?)\s*",
+                                   "", title, flags=re.IGNORECASE)
+                    title = re.split(r"\s*[|\-\u2013]\s*", title)[0].strip()
+                    return title or token
             return token
     except Exception:
         pass

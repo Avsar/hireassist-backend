@@ -74,6 +74,8 @@ _ATS_URL_PATTERNS = [
     (re.compile(r"jobs\.eu\.lever\.co/([^/?#]+)", re.I), "lever"),
     (re.compile(r"jobs\.smartrecruiters\.com/([^/?#]+)", re.I), "smartrecruiters"),
     (re.compile(r"([a-z0-9][a-z0-9-]+)\.recruitee\.com", re.I), "recruitee"),
+    (re.compile(r"jobs\.ashbyhq\.com/([^/?#]+)", re.I), "ashby"),
+    (re.compile(r"([a-z0-9][a-z0-9-]+)\.homerun\.co", re.I), "homerun"),
 ]
 
 

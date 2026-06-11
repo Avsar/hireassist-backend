@@ -16,6 +16,7 @@ import re
 import logging
 import sqlite3
 import threading
+import time
 from bs4 import BeautifulSoup
 
 # Intelligence layer (optional -- endpoints degrade gracefully if not present)
@@ -522,6 +523,94 @@ def recruitee_list_jobs(company: str):
     return data.get("offers", [])
 
 
+def ashby_list_jobs(board_name: str):
+    """Ashby public posting API -- no auth required.
+    Docs: https://developers.ashbyhq.com/docs/public-job-posting-api
+    """
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{board_name}"
+    data = http_get_json(url, timeout=30, retries=1)
+    jobs = (data or {}).get("jobs", [])
+    return [j for j in jobs if j.get("isListed", True)]
+
+
+def homerun_list_jobs(company_slug: str, max_pages: int = 40):
+    """HomeRun (Dutch ATS) -- no public JSON API, but two public surfaces:
+    1. Atom feed at https://feed.homerun.co/{slug} (richer, preferred)
+    2. sitemap.xml on https://{slug}.homerun.co + server-rendered job pages
+
+    Returns a list of dicts: {title, url, location, updated_at}.
+    """
+    jobs = []
+
+    # --- Strategy 1: Atom feed ---
+    try:
+        r = SESSION.get(f"https://feed.homerun.co/{company_slug}",
+                        headers=DEFAULT_HEADERS, timeout=20)
+        if r.status_code == 200 and b"<entry" in r.content:
+            soup = BeautifulSoup(r.text, "xml")
+            for entry in soup.find_all("entry"):
+                title = entry.find("title")
+                link = entry.find("link")
+                updated = entry.find("updated")
+                loc = entry.find("location") or entry.find("city")
+                url = link.get("href", "") if link else ""
+                if title and url:
+                    jobs.append({
+                        "title": title.get_text(strip=True),
+                        "url": url,
+                        "location": loc.get_text(strip=True) if loc else "",
+                        "updated_at": updated.get_text(strip=True) if updated else "",
+                    })
+            if jobs:
+                return jobs
+    except Exception:
+        pass
+
+    # --- Strategy 2: sitemap.xml + job pages (server-rendered, no JS needed) ---
+    try:
+        r = SESSION.get(f"https://{company_slug}.homerun.co/sitemap.xml",
+                        headers=DEFAULT_HEADERS, timeout=20)
+        if r.status_code != 200:
+            return jobs
+        soup = BeautifulSoup(r.text, "xml")
+        seen_slugs = set()
+        job_urls = []
+        for loc_el in soup.find_all("loc"):
+            u = (loc_el.get_text(strip=True) or "").rstrip("/")
+            path = urlparse(u).path.strip("/")
+            # Job pages have a slug path; skip homepage, apply pages, lang dupes
+            if not path or path.endswith("apply"):
+                continue
+            slug = path.split("/")[-1]
+            if slug in seen_slugs or len(slug) < 3:
+                continue
+            seen_slugs.add(slug)
+            job_urls.append(u)
+
+        for u in job_urls[:max_pages]:
+            try:
+                pr = SESSION.get(u, headers=DEFAULT_HEADERS, timeout=15)
+                if pr.status_code != 200:
+                    continue
+                psoup = BeautifulSoup(pr.text, "html.parser")
+                og = psoup.find("meta", property="og:title")
+                h1 = psoup.select_one("main h1") or psoup.find("h1")
+                title = ""
+                if og and og.get("content"):
+                    title = og["content"].split("|")[0].split(" - ")[0].strip()
+                elif h1:
+                    title = h1.get_text(strip=True)
+                if title:
+                    jobs.append({"title": title, "url": u, "location": "", "updated_at": ""})
+                time.sleep(0.3)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return jobs
+
+
 # ----------------------------
 # Helpers
 # ----------------------------
@@ -704,6 +793,9 @@ _JUNK_CITIES = frozenset({
     "hybrid", "remote", "in-office", "all offices", "n/a", "na",
     "distributed", "hybrid; in-office", "distributed; hybrid",
     "united states", "us-rem", "us-remote",
+    "europe", "european union", "eu", "emea", "north america",
+    "worldwide", "global", "anywhere", "other", "international",
+    "benelux", "netherlands", "nederland",
 })
 
 _CITY_ALIASES = {
@@ -929,6 +1021,9 @@ def soft_country_match(job, country: str):
         # (Foreign remotes like "Remote - US" get a parsed country and fall through.)
         if not parsed and "remote" in raw:
             return True
+        # Remote-EU jobs are applicable to NL residents -- include them.
+        if parsed in ("european union", "eu", "europe") and "remote" in raw:
+            return True
 
     return False
 
@@ -1045,6 +1140,66 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "apply_url": apply_url,
                 "updated_at": created_at,
                 "is_new_today": is_new_today(created_at)
+            })
+
+    elif source == "ashby":
+        for j in ashby_list_jobs(token):
+            title = j.get("title", "") or ""
+            loc_raw = j.get("location", "") or ""
+            # Prefer structured address when present
+            addr = ((j.get("address") or {}).get("postalAddress") or {})
+            city, country = split_city_country(loc_raw)
+            if not city and addr.get("addressLocality"):
+                city = _normalize_city(addr["addressLocality"])
+            if not country and addr.get("addressCountry"):
+                ac = str(addr["addressCountry"]).strip()
+                country = "Netherlands" if ac.lower() in ("nl", "netherlands", "nederland") else ac
+            if j.get("isRemote") and not loc_raw:
+                loc_raw = "Remote"
+            emp = (j.get("employmentType") or "")
+            emp = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", emp)  # FullTime -> Full Time
+            published = j.get("publishedAt") or ""
+            jobs.append({
+                "company": company_name,
+                "source": source,
+                "token": token,
+                "id": j.get("id"),
+                "title": title,
+                "department": j.get("department", "") or j.get("team", "") or "",
+                "job_type": emp,
+                "snippet": "",
+                "location_raw": loc_raw,
+                "city": city,
+                "country": country,
+                "apply_url": j.get("jobUrl") or j.get("applyUrl") or "",
+                "updated_at": published,
+                "is_new_today": is_new_today(published),
+            })
+
+    elif source == "homerun":
+        for j in homerun_list_jobs(token):
+            title = j.get("title", "") or ""
+            loc_raw = j.get("location", "") or ""
+            city, country = split_city_country(loc_raw)
+            if not country:
+                # HomeRun is a Dutch ATS; default to NL unless location says otherwise
+                country = "Netherlands"
+            updated = j.get("updated_at") or ""
+            jobs.append({
+                "company": company_name,
+                "source": source,
+                "token": token,
+                "id": j.get("url"),
+                "title": title,
+                "department": "",
+                "job_type": "",
+                "snippet": "",
+                "location_raw": loc_raw,
+                "city": city,
+                "country": country,
+                "apply_url": j.get("url", ""),
+                "updated_at": updated,
+                "is_new_today": is_new_today(updated),
             })
 
     elif source == "careers_page":
@@ -2461,6 +2616,7 @@ def ui(
     SOURCE_NAMES = {
         "greenhouse": "Greenhouse", "lever": "Lever",
         "smartrecruiters": "SmartRecruiters", "recruitee": "Recruitee",
+        "ashby": "Ashby", "homerun": "HomeRun",
         "careers_page": "Career Page",
     }
 
@@ -3581,7 +3737,7 @@ def ui(
 
   function formatMessage(text) {{
     // Convert **bold** to <strong>
-    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
     // Convert newlines to <br>
     text = text.replace(/\\n/g, '<br>');
     return text;

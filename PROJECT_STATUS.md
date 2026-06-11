@@ -201,6 +201,23 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 14: Phase 2 Start — Ashby + HomeRun ATS Support (Jun 11, 2026)
+
+#### Two New Job Sources (now 6 ATS platforms + career pages)
+- **Ashby** (`source="ashby"`): public posting API `https://api.ashbyhq.com/posting-api/job-board/{board}` — no auth. Token = board slug. Unlisted jobs filtered. Structured address used for city/country; `FullTime` -> `Full Time`.
+- **HomeRun** (`source="homerun"`, Dutch ATS — prime hidden-gem source): no public JSON API, but two public surfaces: Atom feed `https://feed.homerun.co/{slug}` (preferred) and `{slug}.homerun.co/sitemap.xml` + server-rendered job pages (fallback, capped at 40 pages, 0.3s delay). Defaults country to Netherlands. Counts as small-ATS for hidden scoring (tier 1 "Low visibility").
+
+#### Integration Points Touched
+- `app.py`: `ashby_list_jobs()`, `homerun_list_jobs()`, normalize branches, SOURCE_NAMES
+- `job_intel.py`: `ashby` uses provider job IDs for dedupe; `homerun` falls back to sha1 key; `homerun` added to `_SMALL_ATS_SOURCES`
+- `sync_ats_jobs.py`: both added to ATS_SOURCES (daily cron syncs them automatically)
+- `agent_discover.py`: `probe_ashby` + `probe_homerun` in PROBERS (token verification: ashby self-verifying, homerun via career-page `<title>`)
+- `ats_reverse_discover.py`: URL patterns for `jobs.ashbyhq.com/{board}` and `{slug}.homerun.co`
+- `test_new_sources.py` (new): live smoke test against known public boards (read-only)
+
+#### Verified (mocked end-to-end in sandbox; live network unavailable there)
+- Normalization, foreign-country tagging, NL defaults, stable dedupe keys (re-upsert = 0 new), hidden-tier assignment
+
 ### Session 13: Phase 1 — Hidden Gems + NL Data Quality (Jun 11, 2026)
 
 #### Hidden-Job Scoring (`job_intel.py`)
