@@ -201,6 +201,28 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 17: INCIDENT — Production Overload + Fixes (Jun 11, 2026, evening)
+
+#### What happened (causal chain)
+1. Morning: `description` column added; evening cron filled ~13.8k descriptions on prod
+2. `aggregate_jobs` used `SELECT *` -> every search query started dragging ~19MB from SQLite
+3. Sitemap (13.8k URLs) submitted to Google -> Googlebot began crawling, incl. paginated/filtered /jobs variants
+4. Each uncached crawl hit = one 19MB full-table query on Railway's small container -> request pile-up -> service wedged (even /version stopped responding)
+5. Frontend fetch timeouts (added same day) surfaced it as "Job search is briefly unavailable" on every page
+
+#### Fixes (in this session, pending deploy)
+- **Slim list query**: explicit column list in `aggregate_jobs` -- description/raw_json never fetched for search results (~19MB -> ~2MB per cold query)
+- **10-min in-memory response cache** (`_AGG_CACHE`, max 32 filter combos, thread-safe, evicts oldest; cleared after bundle import + cron runs). Warm requests: 1.15s -> 0.008s. 50-page crawl burst: 0.5s total.
+- **robots.ts**: `Disallow: /jobs?` -- crawlers skip filtered/paginated search variants (thin content anyway); all 13.8k detail pages remain in sitemap
+
+#### Recovery runbook
+1. Railway dashboard -> service -> check Deployments (did the last deploy fail?) + Metrics (memory/CPU ceiling?) -> **Restart** the service
+2. Push backend fixes (app.py + job_alerts.py), confirm deploy goes green
+3. Verify: `curl -o NUL -s -w "%{time_total}s" .../jobs?per_page=1` -- expect < 2s cold, then repeat -- expect < 0.5s warm
+4. Push frontend robots.ts change
+5. cubea.nl/jobs recovers within 10 min (Vercel cache window)
+6. If Railway memory was at ceiling: consider bumping service resources or `--workers 2` in railway.toml start command (only if needed)
+
 ### Session 16: Phase 4 Milestone 1 — Job Alerts UI + Saved Jobs + Privacy (Jun 11, 2026)
 
 #### Discovery: alert backend already existed

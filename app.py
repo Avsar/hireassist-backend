@@ -178,6 +178,10 @@ def _import_bundle_data(data: dict) -> dict:
 
     elapsed_ms = int((_time.time() - t0) * 1000)
     logger.info("Bundle imported: %s (%dms)", summary, elapsed_ms)
+    try:
+        _agg_cache_clear()
+    except NameError:
+        pass  # cache not defined yet during module init
     return {"summary": summary, "elapsed_ms": elapsed_ms}
 
 
@@ -1282,8 +1286,31 @@ def normalize_jobs(company_name: str, source: str, token: str):
 # ----------------------------
 # Aggregate jobs + filters
 # ----------------------------
+# In-memory result cache for aggregate_jobs. Search-result pages get hammered
+# by crawlers (Googlebot received a 13.8k-URL sitemap); without this, every
+# pagination/filter hit re-scans the whole jobs table. Pagination slices AFTER
+# caching, so /jobs?page=1..N all share one cached entry.
+_AGG_CACHE: dict = {}
+_AGG_CACHE_LOCK = threading.Lock()
+_AGG_CACHE_TTL = 600       # seconds
+_AGG_CACHE_MAX = 32        # distinct filter combos kept
+
+
+def _agg_cache_clear():
+    with _AGG_CACHE_LOCK:
+        _AGG_CACHE.clear()
+
+
 def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0, hidden=False):
-    """Query the jobs table directly -- no live ATS API calls."""
+    """Query the jobs table directly -- no live ATS API calls. Results cached 10 min."""
+    cache_key = (company, q, country, city, english_only, new_today_only, lang, hidden)
+    now_ts = time.time()
+    with _AGG_CACHE_LOCK:
+        entry = _AGG_CACHE.get(cache_key)
+        if entry and now_ts - entry[0] < _AGG_CACHE_TTL:
+            cached = entry[1]
+            return cached[:limit] if limit else cached
+
     with sqlite3.connect(DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
         if _HAS_INTEL:
@@ -1350,6 +1377,13 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
         all_jobs = [j for j in all_jobs if title_looks_english(j.get("title", ""))]
     elif effective_lang == "nl":
         all_jobs = [j for j in all_jobs if title_looks_dutch(j.get("title", ""))]
+
+    with _AGG_CACHE_LOCK:
+        if len(_AGG_CACHE) >= _AGG_CACHE_MAX:
+            # Evict the oldest entry to bound memory
+            oldest = min(_AGG_CACHE, key=lambda k: _AGG_CACHE[k][0])
+            _AGG_CACHE.pop(oldest, None)
+        _AGG_CACHE[cache_key] = (now_ts, all_jobs)
 
     return all_jobs[:limit] if limit else all_jobs
 
@@ -1470,6 +1504,7 @@ def admin_run_cron(request: Request, skip_alerts: bool = False, full: bool = Fal
         return JSONResponse(err, status_code=code)
     import cron_pipeline
     result = cron_pipeline.run(skip_alerts=skip_alerts, full=full)
+    _agg_cache_clear()
     return result
 
 
@@ -4196,6 +4231,7 @@ def _start_keep_alive():
                 import cron_pipeline
                 logger.info("Cron pipeline starting (hour=%d:%02d UTC, full=%s)", hour, minute, full)
                 result = cron_pipeline.run(full=full)
+                _agg_cache_clear()
                 logger.info("Cron pipeline finished: ok=%s failed=%s elapsed=%ss",
                             result.get("ok"), result.get("failed_steps"),
                             result.get("elapsed_sec"))
