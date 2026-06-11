@@ -136,19 +136,22 @@ def _import_bundle_data(data: dict) -> dict:
                 job_intel.ensure_intel_tables(conn)
             conn.executemany(
                 """INSERT INTO jobs (source, company_name, job_key, title, location_raw,
-                      country, city, url, posted_at, first_seen_at, last_seen_at, is_active, raw_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      country, city, url, posted_at, first_seen_at, last_seen_at, is_active, raw_json,
+                      hidden_score, hidden_tier)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(source, job_key) DO UPDATE SET
                      company_name=excluded.company_name, title=excluded.title,
                      location_raw=excluded.location_raw, country=excluded.country,
                      city=excluded.city, url=excluded.url, posted_at=excluded.posted_at,
                      last_seen_at=excluded.last_seen_at, is_active=excluded.is_active,
-                     raw_json=excluded.raw_json""",
+                     raw_json=excluded.raw_json,
+                     hidden_score=excluded.hidden_score, hidden_tier=excluded.hidden_tier""",
                 [(r["source"], r["company_name"], r["job_key"], r["title"],
                   r.get("location_raw", ""), r.get("country"), r.get("city"),
                   r.get("url", ""), r.get("posted_at"),
                   r["first_seen_at"], r["last_seen_at"],
-                  r.get("is_active", 1), r.get("raw_json")) for r in rows],
+                  r.get("is_active", 1), r.get("raw_json"),
+                  r.get("hidden_score", 0), r.get("hidden_tier", 0)) for r in rows],
             )
         summary["jobs"] = len(rows)
 
@@ -597,6 +600,106 @@ _NL_CITIES = frozenset({
 })
 
 
+# Foreign country names/markers found in location_raw -> canonical country.
+# Used to mark non-NL jobs so the default NL view can exclude them cleanly.
+_FOREIGN_COUNTRY_MARKERS = {
+    "united states": "United States", "usa": "United States",
+    "u.s.": "United States", "united kingdom": "United Kingdom",
+    "england": "United Kingdom", "scotland": "United Kingdom",
+    "germany": "Germany", "deutschland": "Germany",
+    "belgium": "Belgium", "belgie": "Belgium", "belgië": "Belgium",
+    "france": "France", "spain": "Spain", "portugal": "Portugal",
+    "italy": "Italy", "poland": "Poland", "romania": "Romania",
+    "ireland": "Ireland", "austria": "Austria", "switzerland": "Switzerland",
+    "sweden": "Sweden", "denmark": "Denmark", "norway": "Norway",
+    "finland": "Finland", "india": "India", "china": "China",
+    "japan": "Japan", "singapore": "Singapore", "australia": "Australia",
+    "canada": "Canada", "brazil": "Brazil", "mexico": "Mexico",
+    "lithuania": "Lithuania", "latvia": "Latvia", "estonia": "Estonia",
+    "czech republic": "Czechia", "czechia": "Czechia", "hungary": "Hungary",
+    "greece": "Greece", "turkey": "Turkey", "israel": "Israel",
+    "united arab emirates": "United Arab Emirates", "dubai": "United Arab Emirates",
+    "south africa": "South Africa", "argentina": "Argentina",
+    "colombia": "Colombia", "philippines": "Philippines",
+    "vietnam": "Vietnam", "indonesia": "Indonesia", "malaysia": "Malaysia",
+    "south korea": "South Korea", "taiwan": "Taiwan", "hong kong": "Hong Kong",
+    "new zealand": "New Zealand", "ukraine": "Ukraine", "serbia": "Serbia",
+    "croatia": "Croatia", "bulgaria": "Bulgaria", "slovakia": "Slovakia",
+    "slovenia": "Slovenia", "luxembourg": "Luxembourg",
+}
+
+# Well-known foreign cities that appear without a country in location_raw.
+_FOREIGN_CITIES = {
+    "new york": "United States", "new york city": "United States",
+    "san francisco": "United States", "los angeles": "United States",
+    "chicago": "United States", "boston": "United States",
+    "seattle": "United States", "austin": "United States",
+    "denver": "United States", "atlanta": "United States",
+    "miami": "United States", "dallas": "United States",
+    "houston": "United States", "washington": "United States",
+    "philadelphia": "United States", "san jose": "United States",
+    "san diego": "United States", "phoenix": "United States",
+    "portland": "United States", "minneapolis": "United States",
+    "london": "United Kingdom", "manchester": "United Kingdom",
+    "edinburgh": "United Kingdom", "cambridge": "United Kingdom",
+    "oxford": "United Kingdom", "dublin": "Ireland",
+    "berlin": "Germany", "munich": "Germany", "münchen": "Germany",
+    "hamburg": "Germany", "frankfurt": "Germany", "cologne": "Germany",
+    "köln": "Germany", "stuttgart": "Germany", "düsseldorf": "Germany",
+    "paris": "France", "lyon": "France", "madrid": "Spain",
+    "barcelona": "Spain", "lisbon": "Portugal", "porto": "Portugal",
+    "milan": "Italy", "rome": "Italy", "warsaw": "Poland",
+    "krakow": "Poland", "wroclaw": "Poland", "gdansk": "Poland",
+    "bucharest": "Romania", "vienna": "Austria", "zurich": "Switzerland",
+    "geneva": "Switzerland", "stockholm": "Sweden", "copenhagen": "Denmark",
+    "oslo": "Norway", "helsinki": "Finland", "vilnius": "Lithuania",
+    "riga": "Latvia", "tallinn": "Estonia", "prague": "Czechia",
+    "budapest": "Hungary", "athens": "Greece", "istanbul": "Turkey",
+    "tel aviv": "Israel", "bengaluru": "India", "bangalore": "India",
+    "mumbai": "India", "delhi": "India", "new delhi": "India",
+    "hyderabad": "India", "pune": "India", "chennai": "India",
+    "gurgaon": "India", "gurugram": "India", "noida": "India",
+    "tokyo": "Japan", "shanghai": "China", "beijing": "China",
+    "shenzhen": "China", "sydney": "Australia", "melbourne": "Australia",
+    "toronto": "Canada", "vancouver": "Canada", "montreal": "Canada",
+    "sao paulo": "Brazil", "são paulo": "Brazil", "mexico city": "Mexico",
+    "buenos aires": "Argentina", "bogota": "Colombia", "bogotá": "Colombia",
+    "manila": "Philippines", "ho chi minh": "Vietnam", "hanoi": "Vietnam",
+    "jakarta": "Indonesia", "kuala lumpur": "Malaysia", "seoul": "South Korea",
+    "taipei": "Taiwan", "auckland": "New Zealand", "kyiv": "Ukraine",
+    "belgrade": "Serbia", "zagreb": "Croatia", "sofia": "Bulgaria",
+    "bratislava": "Slovakia", "ljubljana": "Slovenia",
+    "antwerp": "Belgium", "antwerpen": "Belgium", "brussels": "Belgium",
+    "brussel": "Belgium", "ghent": "Belgium", "gent": "Belgium",
+}
+
+# US state abbreviations: catches "Brooklyn, NY", "Austin, TX" etc.
+_US_STATE_ABBRS = frozenset({
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id",
+    "il", "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms",
+    "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok",
+    "or", "pa", "ri", "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv",
+    "wi", "wy", "dc",
+})
+
+
+def _detect_foreign_country(text: str) -> str | None:
+    """Detect a non-NL country from lowercase location text. None if not found."""
+    for marker, country in _FOREIGN_COUNTRY_MARKERS.items():
+        if re.search(r"\b" + re.escape(marker) + r"\b", text):
+            return country
+    # "City, ST" with a US state abbreviation
+    m = re.search(r",\s*([a-z]{2})\b", text)
+    if m and m.group(1) in _US_STATE_ABBRS:
+        return "United States"
+    # Known foreign city names (word-boundary match on segments)
+    segments = [s.strip() for s in re.split(r"[,;|/\-]", text)]
+    for seg in segments:
+        if seg in _FOREIGN_CITIES:
+            return _FOREIGN_CITIES[seg]
+    return None
+
+
 _JUNK_CITIES = frozenset({
     "hybrid", "remote", "in-office", "all offices", "n/a", "na",
     "distributed", "hybrid; in-office", "distributed; hybrid",
@@ -783,6 +886,8 @@ def split_city_country(raw: str):
         country = "Netherlands"
     elif any(city in text for city in _NL_CITIES):
         country = "Netherlands"
+    else:
+        country = _detect_foreign_country(text)
 
     if "," in raw:
         city = raw.split(",")[0].strip()
@@ -807,6 +912,8 @@ def soft_country_match(job, country: str):
     if not country:
         return True
     cl = country.lower()
+    if cl in ("all", "any"):
+        return True
     parsed = (job.get("country") or "").lower()
     raw = (job.get("location_raw") or "").lower()
 
@@ -817,6 +924,10 @@ def soft_country_match(job, country: str):
 
     if cl == "netherlands":
         if any(x in raw for x in ["netherlands", "nederland", " nl", "(nl", "nl)"]):
+            return True
+        # Remote jobs with no detectable country: keep them in the NL view.
+        # (Foreign remotes like "Remote - US" get a parsed country and fall through.)
+        if not parsed and "remote" in raw:
             return True
 
     return False
@@ -988,7 +1099,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
 # ----------------------------
 # Aggregate jobs + filters
 # ----------------------------
-def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0):
+def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0, hidden=False):
     """Query the jobs table directly -- no live ATS API calls."""
     with sqlite3.connect(DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
@@ -1004,6 +1115,8 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
         if q:
             clauses.append("LOWER(title) LIKE ?")
             params.append(f"%{q.lower()}%")
+        if hidden and _HAS_INTEL:
+            clauses.append("hidden_tier >= 1")
 
         where = " AND ".join(clauses)
         rows = conn.execute(
@@ -1027,6 +1140,7 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
             "is_new_today": is_new_today(r["first_seen_at"] or ""),
             "is_stale": is_stale(r["first_seen_at"] or ""),
             "tech_tags": (r["tech_tags"] if "tech_tags" in r.keys() else "") or "",
+            "hidden_tier": (r["hidden_tier"] if "hidden_tier" in r.keys() else 0) or 0,
             "snippet": "",
         })
 
@@ -1172,14 +1286,17 @@ def admin_run_cron(request: Request, skip_alerts: bool = False, full: bool = Fal
 def jobs(
     company: str | None = Query(default=None),
     q: str | None = Query(default=None),
-    country: str | None = Query(default=None),
+    country: str | None = Query(default="Netherlands"),
     city: str | None = Query(default=None),
     english_only: bool = Query(default=False),
     new_today_only: bool = Query(default=False),
+    hidden: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=100, ge=1, le=500),
 ):
-    all_jobs = [j for j in aggregate_jobs(company, q, country, city, english_only, new_today_only) if not j.get("_placeholder")]
+    """Job listings. Defaults to Netherlands; pass country=all for everything.
+    hidden=true returns only jobs unlikely to appear on big job boards."""
+    all_jobs = [j for j in aggregate_jobs(company, q, country, city, english_only, new_today_only, hidden=hidden) if not j.get("_placeholder")]
     total = len(all_jobs)
     start = (page - 1) * per_page
     page_jobs = all_jobs[start:start + per_page]
@@ -2212,6 +2329,7 @@ def ui(
     english_only: bool = Query(default=False),
     new_today_only: bool = Query(default=False),
     hide_stale: bool = Query(default=False),
+    hidden: bool = Query(default=False),
     lang: str | None = Query(default=None),
     tech: str | None = Query(default=None),
     sort: str = Query(default="newest"),
@@ -2219,7 +2337,7 @@ def ui(
 ):
     PER_PAGE = 100
     all_companies = load_companies()
-    all_jobs = aggregate_jobs(company, q, None, None, english_only, new_today_only, lang=lang)
+    all_jobs = aggregate_jobs(company, q, None, None, english_only, new_today_only, lang=lang, hidden=hidden)
     if hide_stale:
         all_jobs = [j for j in all_jobs if not j.get("is_stale")]
     countries = unique([j.get("country") for j in all_jobs if j.get("country")])
@@ -2455,6 +2573,11 @@ def ui(
 
         # Footer tags
         tags = ""
+        _htier = j.get("hidden_tier") or 0
+        if _htier >= 2:
+            tags += '<span class="pill pill-hidden" title="Scraped directly from the company career page -- typically not syndicated to job boards">&#128142; Hidden gem</span>'
+        elif _htier == 1:
+            tags += '<span class="pill pill-lowvis" title="Small company that rarely posts on big job boards">Low visibility</span>'
         if jtype:
             tags += f'<span class="pill pill-type">{escape(jtype)}</span>'
         if is_new:
@@ -2500,6 +2623,7 @@ def ui(
     if english_only: _base.append("english_only=true")
     if new_today_only: _base.append("new_today_only=true")
     if hide_stale: _base.append("hide_stale=true")
+    if hidden: _base.append("hidden=true")
     if lang: _base.append(f"lang={escape(lang)}")
     if tech: _base.append(f"tech={escape(tech)}")
     sort_base_params = "&amp;".join(_base) if _base else "country=Netherlands"
@@ -2514,6 +2638,7 @@ def ui(
         if english_only: params.append("english_only=true")
         if new_today_only: params.append("new_today_only=true")
         if hide_stale: params.append("hide_stale=true")
+        if hidden: params.append("hidden=true")
         if lang: params.append(f"lang={escape(lang)}")
         if tech: params.append(f"tech={escape(tech)}")
         if sort != "newest": params.append(f"sort={escape(sort)}")
@@ -2541,7 +2666,7 @@ def ui(
         cls = "qf-tag active" if is_active else "qf-tag"
         return f'<div class="{cls}">{label}</div>'
 
-    no_filters = not q and not company and not english_only and not new_today_only and not hide_stale and not city and country == "Netherlands"
+    no_filters = not q and not company and not english_only and not new_today_only and not hide_stale and not hidden and not city and country == "Netherlands"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2708,6 +2833,10 @@ def ui(
     .pill-stale {{ background: #fef3c7; color: #92400e; border-color: #fde68a; }}
     .pill-source {{ background: var(--tag-bg); color: var(--text-light); border-color: var(--border); }}
     .pill-tech {{ background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }}
+    .pill-hidden {{ background: #fdf4ff; color: #a21caf; border-color: #f0abfc; font-weight: 600; }}
+    .pill-lowvis {{ background: #fffbeb; color: #b45309; border-color: #fde68a; }}
+    .qf-gem {{ border-color: #f0abfc; }}
+    .qf-gem.active {{ background: #a21caf; border-color: #a21caf; color: #fff; }}
     .actions-right {{ display: flex; align-items: center; gap: 8px; flex-shrink: 0; }}
     .btn-save {{ background: white; border: 1px solid var(--border); color: var(--text-mid); padding: 6px 14px; border-radius: 6px; font-size: 12px; font-family: 'Inter', sans-serif; font-weight: 500; cursor: pointer; transition: all 0.15s; }}
     .btn-save:hover {{ border-color: var(--primary); color: var(--primary); }}
@@ -3254,7 +3383,7 @@ def ui(
   <a class="qf-tag {"active" if no_filters else ""}" href="/ui">All</a>
   <a class="qf-tag {"active" if english_only and not new_today_only else ""}" href="/ui?english_only=true">English only</a>
   <a class="qf-tag {"active" if new_today_only and not english_only else ""}" href="/ui?new_today_only=true">New today</a>
-  <span class="qf-tag" style="cursor:default;opacity:0.5">Not on LinkedIn</span>
+  <a class="qf-tag qf-gem {"active" if hidden else ""}" href="/ui?hidden=true" title="Jobs scraped directly from company career pages or small companies that rarely post on big job boards">&#128142; Hidden gems</a>
   <span class="qf-tag" style="cursor:default;opacity:0.5">Remote friendly</span>
   <a class="qf-tag {"active" if city and city.lower() == "eindhoven" else ""}" href="/ui?city=Eindhoven">Eindhoven</a>
   <a class="qf-tag {"active" if city and city.lower() == "amsterdam" else ""}" href="/ui?city=Amsterdam">Amsterdam</a>

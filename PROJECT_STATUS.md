@@ -201,6 +201,36 @@ DuckDuckGo search is no longer used anywhere in the codebase.
 
 ## Session History
 
+### Session 13: Phase 1 — Hidden Gems + NL Data Quality (Jun 11, 2026)
+
+#### Hidden-Job Scoring (`job_intel.py`)
+- New columns on `jobs`: `hidden_score` (0-100) + `hidden_tier` (0/1/2), idempotent migration + index
+- `compute_hidden_score()`: career-page/web_search sources +60, Recruitee +25, small company (<10/<25/<50 active jobs) +30/+20/+10, big-poster blocklist caps at 20
+- Tiers: score >= 60 -> 2 "Hidden gem", >= 35 -> 1 "Low visibility", else 0
+- `recompute_hidden_tiers()` runs automatically at the end of `compute_daily_stats()` (so the daily pipeline keeps tiers fresh); provisional tier set on insert in `upsert_jobs()`
+- Bundle export/import carries both columns (Railway gets tiers on next push)
+
+#### Foreign-Country Detection (`app.py`)
+- `_FOREIGN_COUNTRY_MARKERS` (~60 countries), `_FOREIGN_CITIES` (~100 cities), US-state-abbreviation regex
+- `split_city_country()` now marks non-NL jobs with a proper country instead of None
+- `soft_country_match()`: `country=all` sentinel returns everything; remote jobs with no detectable country stay in the NL view
+
+#### API + UI
+- `/jobs` now defaults to `country=Netherlands` (pass `country=all` for everything) and supports `hidden=true`
+- `/ui?hidden=true`: "Hidden gems" quick-filter pill activated (replaces the grayed-out "Not on LinkedIn" placeholder)
+- Job cards show "Hidden gem" (purple) / "Low visibility" (amber) badges; pagination + sort links preserve the hidden param
+
+#### Backfill (`backfill_phase1.py`, new)
+- Re-parses location_raw to fill missing city/country (never overwrites non-empty values), recomputes tiers, prints before/after
+- Verified against the Jun 2 bundle (sandbox test DB): 643 cities + 6,271 countries filled; foreign jobs 782 -> 6,595 detected; tiers: 2,317 gems / 1,271 low-visibility; default /jobs view 4,451 NL jobs, 0 foreign cities
+- **Run once locally: `python backfill_phase1.py`** (or let the next daily pipeline converge over time)
+
+#### Cleanup
+- Removed `test_fresh.db` and the stray `c:Usersamita...tmp_jobs.json` file
+
+#### Note
+- `companies.db` could not be read through the Cowork file mount during this session ("database disk image is malformed" via the mount). Verify locally with `python -c "import sqlite3; print(sqlite3.connect('companies.db').execute('PRAGMA integrity_check').fetchone())"` — if it prints `('ok',)` the file is fine and it was a sync artifact. A copy from before any writes is at `companies.db.bak-phase1`.
+
 ### Session 12: Railway Migration + Career Page Fallback Fix (Feb 23, 2026)
 
 #### Render Cold Start Optimization (`app.py`)

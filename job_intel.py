@@ -72,7 +72,8 @@ def ensure_intel_tables(conn: sqlite3.Connection):
     """)
 
     # Migration: add department + job_type columns (idempotent)
-    for col, col_def in [("department", "TEXT DEFAULT ''"), ("job_type", "TEXT DEFAULT ''"), ("tech_tags", "TEXT DEFAULT ''")]:
+    for col, col_def in [("department", "TEXT DEFAULT ''"), ("job_type", "TEXT DEFAULT ''"), ("tech_tags", "TEXT DEFAULT ''"),
+                         ("hidden_score", "INTEGER DEFAULT 0"), ("hidden_tier", "INTEGER DEFAULT 0")]:
         try:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_def}")
         except sqlite3.OperationalError:
@@ -85,6 +86,10 @@ def ensure_intel_tables(conn: sqlite3.Connection):
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_jobs_city_active
         ON jobs(city, is_active)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_jobs_hidden_active
+        ON jobs(hidden_tier, is_active)
     """)
     conn.commit()
 
@@ -274,6 +279,97 @@ def extract_tech_tags(title: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# B3) Hidden-job visibility scoring (proxy heuristic, no LinkedIn scraping)
+# ---------------------------------------------------------------------------
+#
+# hidden_score (0-100): higher = less likely the job is syndicated to
+# LinkedIn/Indeed/etc. Derived from signals we already have:
+#   - source: career-page scrapes are never syndicated by us and rarely by
+#     the company; Recruitee is overwhelmingly Dutch SMEs that rarely cross-post
+#   - company size: small active-job counts correlate with no recruiting budget
+#     for paid job-board syndication
+#   - big-poster blocklist: well-known companies post everywhere regardless
+#
+# hidden_tier: 0 = unlabeled, 1 = "Low visibility", 2 = "Hidden gem"
+
+# Companies that syndicate widely (LinkedIn, Indeed, ...) regardless of size.
+_BIG_POSTERS = frozenset({
+    "adyen", "booking.com", "booking", "uber", "uber nl", "mollie", "picnic",
+    "asml", "philips", "ing", "abn amro", "rabobank", "kpn", "tomtom",
+    "coolblue", "bol.com", "bol", "albert heijn", "ahold delhaize",
+    "optiver", "imc trading", "imc", "flow traders", "backbase", "miro",
+    "catawiki", "just eat takeaway", "takeaway.com", "vinted", "elastic",
+    "databricks", "stripe", "mongodb", "gitlab", "datadog", "salesforce",
+})
+
+# ATS platforms used overwhelmingly by small Dutch companies.
+_SMALL_ATS_SOURCES = frozenset({"recruitee"})
+
+# Sources that are direct career-page finds (our moat -- never syndicated by us).
+_DIRECT_SOURCES = frozenset({"careers_page", "web_search"})
+
+
+def compute_hidden_score(source: str, company_active_jobs: int, company_name: str = "") -> int:
+    """Score 0-100: how likely this job is NOT visible on big job boards."""
+    score = 0
+    if source in _DIRECT_SOURCES:
+        score += 60
+    elif source in _SMALL_ATS_SOURCES:
+        score += 25
+
+    if company_active_jobs < 10:
+        score += 30
+    elif company_active_jobs < 25:
+        score += 20
+    elif company_active_jobs < 50:
+        score += 10
+
+    if (company_name or "").strip().lower() in _BIG_POSTERS:
+        score = min(score, 20)
+
+    return min(score, 100)
+
+
+def hidden_tier_from_score(score: int) -> int:
+    """2 = Hidden gem, 1 = Low visibility, 0 = unlabeled."""
+    if score >= 60:
+        return 2
+    if score >= 35:
+        return 1
+    return 0
+
+
+def recompute_hidden_tiers(conn: sqlite3.Connection) -> dict:
+    """Recompute hidden_score/hidden_tier for all active jobs.
+
+    Needs full-table company job counts, so it runs as a post-pass
+    (daily pipeline) rather than inside upsert_jobs. Idempotent.
+    Returns {tier: count} summary.
+    """
+    counts = dict(conn.execute(
+        "SELECT company_name, COUNT(*) FROM jobs WHERE is_active=1 GROUP BY company_name"
+    ).fetchall())
+
+    rows = conn.execute(
+        "SELECT id, source, company_name FROM jobs WHERE is_active=1"
+    ).fetchall()
+
+    updates = []
+    summary = {0: 0, 1: 0, 2: 0}
+    for job_id, source, company in rows:
+        score = compute_hidden_score(source, counts.get(company, 0), company)
+        tier = hidden_tier_from_score(score)
+        summary[tier] += 1
+        updates.append((score, tier, job_id))
+
+    conn.executemany(
+        "UPDATE jobs SET hidden_score=?, hidden_tier=? WHERE id=?", updates
+    )
+    conn.commit()
+    return summary
+
+
+# ---------------------------------------------------------------------------
 # C) Stable dedupe key per source
 # ---------------------------------------------------------------------------
 
@@ -338,6 +434,10 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
             department = infer_department(title)
         job_type = jd.get("job_type") or ""
         tech_tags = jd.get("tech_tags") or extract_tech_tags(title)
+        # Provisional hidden score from source alone (company size unknown here);
+        # the daily recompute_hidden_tiers() pass refines it with size signals.
+        h_score = compute_hidden_score(source, 999, company_name)
+        h_tier = hidden_tier_from_score(h_score)
 
         existing = conn.execute(
             "SELECT id, is_active FROM jobs WHERE source=? AND job_key=?",
@@ -361,11 +461,11 @@ def upsert_jobs(conn: sqlite3.Connection, source: str, company_name: str,
             conn.execute(
                 """INSERT INTO jobs
                     (source, company_name, job_key, title, location_raw, country, city,
-                     url, department, job_type, tech_tags,
+                     url, department, job_type, tech_tags, hidden_score, hidden_tier,
                      posted_at, first_seen_at, last_seen_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (source, company_name, job_key, title, location_raw, country, city,
-                 url, department, job_type, tech_tags,
+                 url, department, job_type, tech_tags, h_score, h_tier,
                  posted_at, now, now),
             )
             stats["new"] += 1
@@ -442,6 +542,12 @@ def compute_daily_stats(conn: sqlite3.Connection, stat_date: str | None = None):
         """, (stat_date, company_name, source, active_jobs, new_jobs, closed_jobs, net_change))
 
     conn.commit()
+
+    # Refresh hidden-job tiers now that company job counts are settled for the day.
+    try:
+        recompute_hidden_tiers(conn)
+    except Exception:
+        pass  # never let tier refresh break the stats pipeline
 
 
 # ---------------------------------------------------------------------------
