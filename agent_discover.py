@@ -811,53 +811,70 @@ def run(
     }
 
     # ---- Step 1: Fetch candidates ----
-    if source == "osm":
+    if source == "pending":
+        # Skip fetching entirely: work through the existing backlog of
+        # status='new' rows in discovery_candidates (highest score first).
+        raw = []
+        pending_total = conn.execute(
+            "SELECT COUNT(*) FROM discovery_candidates WHERE status='new'"
+        ).fetchone()[0]
+        logger.info(f"Processing existing backlog: {pending_total} pending candidates "
+                    f"(this run: up to {limit})")
+        if pending_total == 0:
+            logger.info("Backlog is empty -- nothing to process.")
+            conn.close()
+            return
+    elif source == "osm":
         raw = discover_osm(region, limit=limit * 3)
     elif source == "google":
         raw = discover_google(region)
     elif source == "kvk":
         raw = discover_kvk(region)
     else:
-        logger.error(f"Unknown source '{source}'. Use 'osm', 'google', or 'kvk'.")
+        logger.error(f"Unknown source '{source}'. Use 'osm', 'google', 'kvk', or 'pending'.")
         conn.close()
         return
 
-    stats["fetched_from_osm"] = len(raw)  # reuse counter name for compatibility
-    logger.info(f"Fetched {len(raw)} candidates from {source}")
+    if source != "pending":
+        stats["fetched_from_osm"] = len(raw)  # reuse counter name for compatibility
+        logger.info(f"Fetched {len(raw)} candidates from {source}")
 
-    if not raw:
-        logger.info("No candidates found. Try a broader region.")
-        conn.close()
-        return
+        if not raw:
+            logger.info("No candidates found. Try a broader region, or use "
+                        "--source pending to process the stored backlog.")
+            conn.close()
+            return
 
     # ---- Step 2: Score and filter ----
-    logger.info("Scoring and filtering candidates...")
     eligible = []
-    filtered_out = 0
-    for c in raw:
-        sc = score_candidate(c)
-        c["_score"] = sc
-        ok, reason = is_candidate_eligible(c, min_score=min_score, require_website=require_website)
-        if ok:
-            eligible.append(c)
-        else:
-            filtered_out += 1
-            logger.debug(f"  Filtered: {c['name']:<35}  score={sc:>4}  reason={reason}")
+    if raw:
+        logger.info("Scoring and filtering candidates...")
+        filtered_out = 0
+        for c in raw:
+            sc = score_candidate(c)
+            c["_score"] = sc
+            ok, reason = is_candidate_eligible(c, min_score=min_score, require_website=require_website)
+            if ok:
+                eligible.append(c)
+            else:
+                filtered_out += 1
+                logger.debug(f"  Filtered: {c['name']:<35}  score={sc:>4}  reason={reason}")
 
-    stats["eligible_after_filter"] = len(eligible)
-    logger.info(
-        f"Eligible: {len(eligible)} / {len(raw)}  "
-        f"(filtered out {filtered_out})"
-    )
+        stats["eligible_after_filter"] = len(eligible)
+        logger.info(
+            f"Eligible: {len(eligible)} / {len(raw)}  "
+            f"(filtered out {filtered_out})"
+        )
 
-    if not eligible:
-        logger.info("No eligible candidates after filtering.")
-        conn.close()
-        return
+        if not eligible:
+            logger.info("No eligible candidates after filtering.")
+            conn.close()
+            return
 
     # ---- Step 3: Store in discovery_candidates (upsert) ----
-    new_count = store_candidates(conn, eligible)
-    logger.info(f"Stored candidates: {new_count} new, {len(eligible) - new_count} already seen")
+    if eligible:
+        new_count = store_candidates(conn, eligible)
+        logger.info(f"Stored candidates: {new_count} new, {len(eligible) - new_count} already seen")
 
     # ---- Step 4: Load unprocessed candidates ----
     unprocessed = get_unprocessed(conn, limit=limit)
@@ -1091,8 +1108,9 @@ if __name__ == "__main__":
         help="Region to search (e.g. Eindhoven, Noord-Brabant, Netherlands)",
     )
     parser.add_argument(
-        "--source", type=str, default="osm", choices=["osm", "google", "kvk"],
-        help="Discovery source: osm (free), google (Places API), or kvk (KVK Zoeken API)",
+        "--source", type=str, default="osm", choices=["osm", "google", "kvk", "pending"],
+        help="Discovery source: osm (free), google (Places API), kvk (KVK Zoeken API), "
+             "or pending (process the stored backlog, no new fetch)",
     )
     parser.add_argument(
         "--limit", type=int, default=200,
