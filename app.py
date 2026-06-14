@@ -1866,6 +1866,37 @@ def api_auth_verify(token: str = Query(...)):
     )
 
 
+@app.post("/api/auth/verify")
+def api_auth_verify_json(token: str = Form(...)):
+    """JSON token verification, called server-side by the Next.js app in Phase 3
+    (it sets the first-party cubea.nl session cookie). Single-use, like the GET path."""
+    email = _job_alerts.verify_login_token(token)
+    if email:
+        return JSONResponse({"ok": True, "email": email})
+    return JSONResponse({"ok": False}, status_code=400)
+
+
+def _internal_authorized(request: Request) -> bool:
+    """True only if the request carries the correct internal shared secret.
+    Fails closed: if INTERNAL_API_SECRET is unset, nothing is authorized."""
+    secret = os.environ.get("INTERNAL_API_SECRET", "")
+    provided = request.headers.get("X-Internal-Token", "")
+    return bool(secret) and provided == secret
+
+
+@app.get("/api/me/alerts")
+def api_me_alerts(request: Request, email: str = Query(...)):
+    """Return a user's active alerts. Internal endpoint: only the Next.js server
+    may call it (after verifying the session), authenticated by X-Internal-Token."""
+    if not _internal_authorized(request):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=403)
+    return JSONResponse({
+        "ok": True,
+        "email": email.strip().lower(),
+        "alerts": _job_alerts.list_alerts(email),
+    })
+
+
 @app.get("/api/alerts/confirm", response_class=HTMLResponse)
 def api_confirm_alert(token: str = Query(...)):
     """Confirm an alert subscription via email link."""

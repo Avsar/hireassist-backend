@@ -332,6 +332,36 @@ def send_login_email(email: str, token: str):
     _send_email(email, "Your CubeA login link", html)
 
 
+def list_alerts(email: str) -> list:
+    """Return active alerts for an email -- used by the logged-in account page."""
+    email = (email or "").strip().lower()
+    if not email:
+        return []
+    conn = sqlite3.connect(DB_FILE)
+    ensure_alerts_table(conn)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, token, filters_json, is_confirmed, created_at FROM job_alerts "
+        "WHERE email = ? AND is_active = 1 ORDER BY created_at DESC",
+        (email,),
+    ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        try:
+            filters = json.loads(r["filters_json"] or "{}")
+        except (ValueError, TypeError):
+            filters = {}
+        out.append({
+            "id": r["id"],
+            "token": r["token"],
+            "filters": filters,
+            "is_confirmed": bool(r["is_confirmed"]),
+            "created_at": r["created_at"],
+        })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Job matching
 # ---------------------------------------------------------------------------
