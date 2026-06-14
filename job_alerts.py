@@ -312,8 +312,10 @@ def verify_login_token(token: str) -> str | None:
 
 
 def send_login_email(email: str, token: str):
-    base = _get_base_url()
-    login_url = f"{base}/api/auth/verify?token={token}"
+    # Magic link lands on the Next.js app (cubea.nl), which verifies the token
+    # with the backend and sets the first-party session cookie.
+    site = os.environ.get("PUBLIC_SITE_URL", "https://cubea.nl").rstrip("/")
+    login_url = f"{site}/api/auth/verify?token={token}"
     html = f"""\
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:500px;margin:0 auto;padding:20px;">
   <h2 style="color:#0d9488;margin-bottom:16px;">Log in to CubeA</h2>
