@@ -16,7 +16,7 @@ import secrets
 import smtplib
 import sqlite3
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -222,6 +222,114 @@ def send_confirmation_email(email: str, token: str):
   </p>
 </div>"""
     _send_email(email, "Confirm your CubeA job alert", html)
+
+
+# ---------------------------------------------------------------------------
+# Passwordless magic-link login
+# ---------------------------------------------------------------------------
+
+LOGIN_TOKEN_TTL_MIN = 15  # magic link validity window
+
+
+def ensure_login_tokens_table(conn: sqlite3.Connection):
+    """Create the login_tokens table if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS login_tokens (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT NOT NULL,
+            token       TEXT NOT NULL UNIQUE,
+            created_at  TEXT NOT NULL,
+            expires_at  TEXT NOT NULL,
+            used_at     TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_tokens_token ON login_tokens(token)")
+    conn.commit()
+
+
+def create_login_token(email: str) -> dict:
+    """Create a single-use magic-login token and email the link.
+    Returns a generic success message (does not reveal whether the email exists)."""
+    email = email.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"ok": False, "message": "Please enter a valid email address."}
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(minutes=LOGIN_TOKEN_TTL_MIN)
+
+    conn = sqlite3.connect(DB_FILE)
+    ensure_login_tokens_table(conn)
+    conn.execute(
+        "INSERT INTO login_tokens (email, token, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (email, token, now.isoformat(), expires.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+    def _send():
+        try:
+            send_login_email(email, token)
+        except Exception as e:
+            logger.error("Failed to send login email to %s: %s", email, e)
+
+    threading.Thread(target=_send, daemon=True).start()
+    return {"ok": True, "message": "If that email is valid, we've sent you a login link."}
+
+
+def verify_login_token(token: str) -> str | None:
+    """Validate a login token (exists, not expired, not used), mark it used,
+    and return the associated email -- or None if invalid."""
+    if not token:
+        return None
+    conn = sqlite3.connect(DB_FILE)
+    ensure_login_tokens_table(conn)
+    row = conn.execute(
+        "SELECT email, expires_at, used_at FROM login_tokens WHERE token = ?",
+        (token,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    email, expires_at, used_at = row
+    now = datetime.now(timezone.utc)
+    if used_at is not None:
+        conn.close()
+        return None
+    try:
+        if now > datetime.fromisoformat(expires_at):
+            conn.close()
+            return None
+    except ValueError:
+        conn.close()
+        return None
+
+    conn.execute("UPDATE login_tokens SET used_at = ? WHERE token = ?", (now.isoformat(), token))
+    conn.commit()
+    conn.close()
+    return email
+
+
+def send_login_email(email: str, token: str):
+    base = _get_base_url()
+    login_url = f"{base}/api/auth/verify?token={token}"
+    html = f"""\
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:500px;margin:0 auto;padding:20px;">
+  <h2 style="color:#0d9488;margin-bottom:16px;">Log in to CubeA</h2>
+  <p style="color:#374151;font-size:14px;line-height:1.6;">
+    Click the button below to log in. This link can only be used once and expires in {LOGIN_TOKEN_TTL_MIN} minutes.
+  </p>
+  <div style="text-align:center;margin:24px 0;">
+    <a href="{login_url}" style="background:#0d9488;color:white;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;display:inline-block;">
+      Log in
+    </a>
+  </div>
+  <p style="color:#6b7280;font-size:12px;">
+    If you did not request this, you can safely ignore this email.
+  </p>
+</div>"""
+    _send_email(email, "Your CubeA login link", html)
 
 
 # ---------------------------------------------------------------------------

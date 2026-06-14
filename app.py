@@ -1834,6 +1834,38 @@ def api_create_alert(
     return JSONResponse(result, status_code=status)
 
 
+# ----------------------------
+# Passwordless magic-link login (Phase 1: backend foundation)
+# ----------------------------
+@app.post("/api/auth/request-link")
+def api_auth_request_link(email: str = Form(...)):
+    """Send a passwordless magic login link to the given email.
+    Always returns a generic message to avoid revealing whether an email exists."""
+    result = _job_alerts.create_login_token(email)
+    status = 200 if result["ok"] else 400
+    return JSONResponse(result, status_code=status)
+
+
+@app.get("/api/auth/verify", response_class=HTMLResponse)
+def api_auth_verify(token: str = Query(...)):
+    """Validate a magic-login token. (Phase 1: confirms the round-trip; the
+    cubea.nl session/preferences page is built in Phase 3, which will call this
+    token-verification path and set a first-party session cookie.)"""
+    email = _job_alerts.verify_login_token(token)
+    if email:
+        return _alert_page(
+            "You're logged in",
+            f"Logged in as <strong>{escape(email)}</strong>. "
+            "Your account &amp; preferences page is coming soon.",
+            success=True,
+        )
+    return _alert_page(
+        "Login link invalid",
+        "This login link is invalid or has expired. Please request a new one.",
+        success=False,
+    )
+
+
 @app.get("/api/alerts/confirm", response_class=HTMLResponse)
 def api_confirm_alert(token: str = Query(...)):
     """Confirm an alert subscription via email link."""
