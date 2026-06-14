@@ -1897,6 +1897,25 @@ def api_me_alerts(request: Request, email: str = Query(...)):
     })
 
 
+# ----------------------------
+# User feedback
+# ----------------------------
+import feedback as _feedback
+
+
+@app.post("/api/feedback")
+def api_feedback(
+    request: Request,
+    message: str = Form(...),
+    email: str = Form(""),
+    page: str = Form(""),
+):
+    """Store a piece of user feedback and email a notification."""
+    ua = request.headers.get("user-agent", "")
+    result = _feedback.save_feedback(message, email, page, ua)
+    return JSONResponse(result, status_code=200 if result["ok"] else 400)
+
+
 @app.get("/api/alerts/confirm", response_class=HTMLResponse)
 def api_confirm_alert(token: str = Query(...)):
     """Confirm an alert subscription via email link."""
