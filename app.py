@@ -1914,7 +1914,7 @@ def _alert_page(title: str, message: str, success: bool = True) -> str:
     return f"""\
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} - HireAssist</title>
+<title>{title} - CubeA</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex;
          align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; }}
@@ -1931,7 +1931,7 @@ def _alert_page(title: str, message: str, success: bool = True) -> str:
   <div class="icon">{icon}</div>
   <h1>{title}</h1>
   <p>{message}</p>
-  <a href="/ui">Back to HireAssist</a>
+  <a href="https://cubea.nl/jobs">Back to CubeA</a>
 </div></body></html>"""
 
 

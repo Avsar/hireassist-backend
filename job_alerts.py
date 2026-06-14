@@ -350,7 +350,7 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
 
     more_text = ""
     if remaining:
-        more_text = f'<p style="color:#6b7280;font-size:13px;">...and {remaining} more. <a href="{base}/ui" style="color:#0d9488;">View all on CubeA</a></p>'
+        more_text = f'<p style="color:#6b7280;font-size:13px;">...and {remaining} more. <a href="https://cubea.nl/jobs" style="color:#0d9488;">View all on CubeA</a></p>'
 
     count = len(jobs)
     s = "s" if count != 1 else ""
@@ -364,7 +364,7 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
   <table style="width:100%;border-collapse:collapse;">{job_rows}</table>
   {more_text}
   <div style="margin-top:24px;text-align:center;">
-    <a href="{base}/ui" style="background:#0d9488;color:white;padding:10px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;display:inline-block;">View all jobs</a>
+    <a href="https://cubea.nl/jobs" style="background:#0d9488;color:white;padding:10px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;display:inline-block;">View all jobs</a>
   </div>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
   <p style="color:#9ca3af;font-size:11px;text-align:center;">
