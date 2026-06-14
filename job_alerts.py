@@ -1,5 +1,5 @@
 """
-job_alerts.py -- Job alert email system for HireAssist.
+job_alerts.py -- Job alert email system for CubeA.
 
 Handles:
   - Database schema for alert subscriptions
@@ -150,7 +150,7 @@ def _send_via_resend(to: str, subject: str, html_body: str, api_key: str):
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {api_key}"},
         json={
-            "from": f"HireAssist <{from_addr}>",
+            "from": f"CubeA <{from_addr}>",
             "to": [to],
             "subject": subject,
             "html": html_body,
@@ -178,7 +178,7 @@ def _send_via_smtp(to: str, subject: str, html_body: str):
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = f"HireAssist <{from_addr}>"
+    msg["From"] = f"CubeA <{from_addr}>"
     msg["To"] = to
 
     plain = f"{subject}\n\nPlease view this email in an HTML-capable client."
@@ -210,7 +210,7 @@ def send_confirmation_email(email: str, token: str):
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:500px;margin:0 auto;padding:20px;">
   <h2 style="color:#0d9488;margin-bottom:16px;">Confirm your job alert</h2>
   <p style="color:#374151;font-size:14px;line-height:1.6;">
-    You requested a job alert on HireAssist. Click the button below to activate it:
+    You requested a job alert on CubeA. Click the button below to activate it:
   </p>
   <div style="text-align:center;margin:24px 0;">
     <a href="{confirm_url}" style="background:#0d9488;color:white;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;display:inline-block;">
@@ -221,7 +221,7 @@ def send_confirmation_email(email: str, token: str):
     If you did not request this, you can safely ignore this email.
   </p>
 </div>"""
-    _send_email(email, "Confirm your HireAssist job alert", html)
+    _send_email(email, "Confirm your CubeA job alert", html)
 
 
 # ---------------------------------------------------------------------------
@@ -350,14 +350,14 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
 
     more_text = ""
     if remaining:
-        more_text = f'<p style="color:#6b7280;font-size:13px;">...and {remaining} more. <a href="{base}/ui" style="color:#0d9488;">View all on HireAssist</a></p>'
+        more_text = f'<p style="color:#6b7280;font-size:13px;">...and {remaining} more. <a href="{base}/ui" style="color:#0d9488;">View all on CubeA</a></p>'
 
     count = len(jobs)
     s = "s" if count != 1 else ""
     return f"""\
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:20px;">
   <div style="text-align:center;margin-bottom:20px;">
-    <span style="font-size:20px;font-weight:800;color:#0f172a;">HireAssist</span>
+    <span style="font-size:20px;font-weight:800;color:#0f172a;">CubeA</span>
   </div>
   <h2 style="color:#0f172a;font-size:18px;margin-bottom:4px;">{count} new job{s} matching your alert</h2>
   <p style="color:#6b7280;font-size:13px;margin-bottom:20px;">Filters: {filter_summary}</p>
@@ -368,7 +368,7 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
   </div>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
   <p style="color:#9ca3af;font-size:11px;text-align:center;">
-    You're receiving this because you set up a job alert on HireAssist.<br>
+    You're receiving this because you set up a job alert on CubeA.<br>
     <a href="{unsubscribe_url}" style="color:#9ca3af;">Unsubscribe</a>
   </p>
 </div>"""
@@ -403,7 +403,7 @@ def send_daily_digests(today: str | None = None) -> dict:
             html = _build_digest_html(matched, filters, alert["token"])
             count = len(matched)
             s = "s" if count != 1 else ""
-            subject = f"{count} new job{s} matching your HireAssist alert"
+            subject = f"{count} new job{s} matching your CubeA alert"
             _send_email(alert["email"], subject, html)
 
             now = datetime.now(timezone.utc).isoformat()

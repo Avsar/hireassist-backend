@@ -415,7 +415,7 @@ def main():
             + log_tail
         )
         send_health_alert(
-            f"[Hire Assist] Pipeline failed: {', '.join(failed)}",
+            f"[CubeA] Pipeline failed: {', '.join(failed)}",
             body,
         )
 
