@@ -1499,6 +1499,22 @@ def _check_admin(request: Request):
     return None, 0
 
 
+@app.get("/admin/verify-gems")
+def admin_verify_gems(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=2500),
+    recheck: bool = Query(default=False),
+):
+    """Verify hidden gems against the big boards via Serper; reports the real leak
+    rate. Keep limit modest (50) to stay within request timeouts; call repeatedly
+    to accumulate (it skips already-checked jobs)."""
+    err, code = _check_admin(request)
+    if err:
+        return JSONResponse(err, status_code=code)
+    import verify_hidden
+    return JSONResponse(verify_hidden.verify_gems(limit=limit, recheck=recheck))
+
+
 @app.post("/admin/import-bundle")
 async def import_bundle(request: Request):
     global _last_import
