@@ -1369,7 +1369,7 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
             # out of SQLite on every search and time out the frontend.
             f"""SELECT id, source, company_name, title, location_raw, country, city,
                        url, posted_at, first_seen_at, department, job_type,
-                       tech_tags, hidden_tier
+                       tech_tags, hidden_tier, job_key
                 FROM jobs WHERE {where} ORDER BY company_name, title""",
             params,
         ).fetchall()
@@ -1393,6 +1393,8 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
             "is_stale": is_stale(r["first_seen_at"] or ""),
             "tech_tags": (r["tech_tags"] if "tech_tags" in r.keys() else "") or "",
             "hidden_tier": (r["hidden_tier"] if "hidden_tier" in r.keys() else 0) or 0,
+            "job_key": (r["job_key"] if "job_key" in r.keys() else "") or "",
+            "verified_hidden": False,
             "snippet": "",
         })
 
@@ -1433,6 +1435,20 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
         subs = _JT.get(job_type.lower())
         if subs:
             all_jobs = [j for j in all_jobs if any(s in (j.get("job_type") or "").lower() for s in subs)]
+
+    # "Verified hidden" = a gem that was checked against the boards and NOT found.
+    # Until the verification table is populated, no job is verified (graceful).
+    try:
+        with sqlite3.connect(DB_FILE) as _vc:
+            verified_set = {row[0] for row in _vc.execute(
+                "SELECT job_key FROM gem_verifications WHERE on_boards = 0"
+            ).fetchall()}
+    except sqlite3.OperationalError:
+        verified_set = set()
+    for j in all_jobs:
+        j["verified_hidden"] = bool(j.get("hidden_tier", 0) >= 2 and j.get("job_key") in verified_set)
+    if hidden:
+        all_jobs = [j for j in all_jobs if j["verified_hidden"]]
 
     with _AGG_CACHE_LOCK:
         if len(_AGG_CACHE) >= _AGG_CACHE_MAX:
@@ -1705,6 +1721,15 @@ def job_detail(job_id: int):
              "city": x["city"] or ""}
             for x in related
         ]
+        try:
+            vrow = conn.execute(
+                "SELECT on_boards FROM gem_verifications WHERE job_key = ?", (r["job_key"],)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            vrow = None
+        job["verified_hidden"] = bool(
+            job["hidden_tier"] >= 2 and vrow is not None and vrow["on_boards"] == 0
+        )
     return job
 
 
