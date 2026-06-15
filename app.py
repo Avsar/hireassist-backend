@@ -1502,17 +1502,50 @@ def _check_admin(request: Request):
 @app.get("/admin/verify-gems")
 def admin_verify_gems(
     request: Request,
-    limit: int = Query(default=50, ge=1, le=2500),
+    limit: int = Query(default=50, ge=1, le=5000),
     recheck: bool = Query(default=False),
+    background: bool = Query(default=False),
 ):
     """Verify hidden gems against the big boards via Serper; reports the real leak
-    rate. Keep limit modest (50) to stay within request timeouts; call repeatedly
-    to accumulate (it skips already-checked jobs)."""
+    rate. Synchronous (limit<=50) reports immediately; background=true kicks off a
+    full backfill in a thread (poll /admin/gem-status to watch progress)."""
     err, code = _check_admin(request)
     if err:
         return JSONResponse(err, status_code=code)
     import verify_hidden
+    if background:
+        import threading
+        threading.Thread(
+            target=verify_hidden.verify_gems,
+            kwargs={"limit": limit, "recheck": recheck},
+            daemon=True,
+        ).start()
+        return JSONResponse({"started": True, "limit": limit, "poll": "/admin/gem-status"})
     return JSONResponse(verify_hidden.verify_gems(limit=limit, recheck=recheck))
+
+
+@app.get("/admin/gem-status")
+def admin_gem_status(request: Request):
+    """Progress of hidden-gem verification: how many gems exist, how many checked,
+    how many leaked onto the boards."""
+    err, code = _check_admin(request)
+    if err:
+        return JSONResponse(err, status_code=code)
+    import verify_hidden
+    conn = sqlite3.connect(verify_hidden.DB_FILE)
+    verify_hidden.ensure_verif_table(conn)
+    gems = conn.execute("SELECT COUNT(*) FROM jobs WHERE is_active = 1 AND hidden_tier >= 2").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM gem_verifications").fetchone()[0]
+    on = conn.execute("SELECT COUNT(*) FROM gem_verifications WHERE on_boards = 1").fetchone()[0]
+    conn.close()
+    return JSONResponse({
+        "total_gems": gems,
+        "verified": total,
+        "remaining": max(gems - total, 0),
+        "on_boards": on,
+        "hidden_confirmed": total - on,
+        "leak_pct": round(100 * on / total, 1) if total else 0,
+    })
 
 
 @app.post("/admin/import-bundle")
