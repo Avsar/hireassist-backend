@@ -9,6 +9,7 @@ the read path can later expose a trustworthy "verified hidden" flag.
 
 import logging
 import os
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -38,7 +39,11 @@ def ensure_verif_table(conn: sqlite3.Connection):
 def _on_boards(title: str, company: str) -> tuple[bool, str]:
     """One Serper query: is this exact role findable on LinkedIn or Indeed?
     Returns (found, which_board). Raises on API error."""
-    q = f'"{title}" {company} (site:linkedin.com OR site:indeed.com OR site:nl.indeed.com)'
+    # Sanitize: long titles / quotes / brackets can produce an invalid query
+    # that errors every time. Truncate and strip the problem characters.
+    t = re.sub(r'["()\[\]]', " ", title or "").strip()[:100].strip()
+    c = re.sub(r'["()\[\]]', " ", company or "").strip()[:60].strip()
+    q = f'"{t}" {c} (site:linkedin.com OR site:indeed.com OR site:nl.indeed.com)'
     resp = requests.post(
         SERPER_URL,
         headers={"X-API-KEY": SERPER_KEY, "Content-Type": "application/json"},

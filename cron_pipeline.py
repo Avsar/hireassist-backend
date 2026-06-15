@@ -143,6 +143,18 @@ def run(skip_alerts: bool = False, full: bool = False) -> dict:
         results["steps"]["stats"] = {"ok": False, "error": str(e)}
         print(f"[cron] Stats FAILED: {e}")
 
+    # Step 2b: Verify new hidden gems against the big boards (Serper).
+    # Only checks unverified gems, so cost stays bounded; no-op if no API key.
+    try:
+        import verify_hidden
+        vlimit = int(os.environ.get("CRON_VERIFY_LIMIT", "300"))
+        vres = verify_hidden.verify_gems(limit=vlimit)
+        results["steps"]["verify_gems"] = vres
+        print(f"[cron] Verify gems: {vres}")
+    except Exception as e:
+        results["steps"]["verify_gems"] = {"ok": False, "error": str(e)}
+        print(f"[cron] Verify gems FAILED: {e}")
+
     # Step 3: Alerts
     if skip_alerts:
         results["steps"]["alerts"] = {"ok": True, "skipped": True}
