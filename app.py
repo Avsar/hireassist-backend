@@ -1307,6 +1307,31 @@ def _agg_cache_clear():
         _AGG_CACHE.clear()
 
 
+def _derive_city(city_col, location_raw):
+    """Read-time city fallback: if the stored city is blank, recover it from the
+    raw location string (~64% of blank-city jobs have a parseable location_raw)."""
+    c = _normalize_city(city_col)
+    if c:
+        return c
+    if location_raw:
+        guess = split_city_country(location_raw)[0]
+        return _normalize_city(guess) or ""
+    return ""
+
+
+def _derive_job_type(job_type_col, title):
+    """Read-time job-type fallback for jobs with no job_type: infer only the clear
+    cases (internship / part-time) from the title -- never assume full-time."""
+    if (job_type_col or "").strip():
+        return job_type_col
+    t = (title or "").lower()
+    if any(k in t for k in ("intern", "stage", "afstudeer", "werkstudent", "graduate", "trainee")):
+        return "Internship"
+    if "part-time" in t or "parttime" in t or "part time" in t or re.search(r"\b\d{1,2}\s*(?:-\s*\d{1,2})?\s*uur\b", t):
+        return "Parttime"
+    return ""
+
+
 def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0, hidden=False, role_kw=None, job_type=None, remote=False):
     """Query the jobs table directly -- no live ATS API calls. Results cached 10 min."""
     cache_key = (company, q, country, city, english_only, new_today_only, lang, hidden, role_kw, job_type, remote)
@@ -1358,9 +1383,9 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
             "source": r["source"],
             "title": r["title"],
             "department": r["department"] or "",
-            "job_type": r["job_type"] or "",
+            "job_type": _derive_job_type(r["job_type"], r["title"]),
             "location_raw": r["location_raw"] or "",
-            "city": _normalize_city(r["city"]) or "",
+            "city": _derive_city(r["city"], r["location_raw"]),
             "country": r["country"] or "",
             "apply_url": r["url"] or "",
             "updated_at": r["posted_at"] or r["first_seen_at"] or "",
@@ -1606,9 +1631,9 @@ def job_detail(job_id: int):
             "source": r["source"],
             "title": r["title"],
             "department": r["department"] or "",
-            "job_type": r["job_type"] or "",
+            "job_type": _derive_job_type(r["job_type"], r["title"]),
             "location_raw": r["location_raw"] or "",
-            "city": _normalize_city(r["city"]) or "",
+            "city": _derive_city(r["city"], r["location_raw"]),
             "country": r["country"] or "",
             "apply_url": r["url"] or "",
             "description": (r["description"] if "description" in cols else "") or "",
