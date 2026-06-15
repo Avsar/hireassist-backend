@@ -1307,9 +1307,9 @@ def _agg_cache_clear():
         _AGG_CACHE.clear()
 
 
-def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0, hidden=False):
+def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=False, new_today_only=False, lang=None, limit=0, hidden=False, role_kw=None, job_type=None, remote=False):
     """Query the jobs table directly -- no live ATS API calls. Results cached 10 min."""
-    cache_key = (company, q, country, city, english_only, new_today_only, lang, hidden)
+    cache_key = (company, q, country, city, english_only, new_today_only, lang, hidden, role_kw, job_type, remote)
     now_ts = time.time()
     with _AGG_CACHE_LOCK:
         entry = _AGG_CACHE.get(cache_key)
@@ -1331,6 +1331,9 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
         if q:
             clauses.append("LOWER(title) LIKE ?")
             params.append(f"%{q.lower()}%")
+        if role_kw:
+            clauses.append("LOWER(title) LIKE ?")
+            params.append(f"%{role_kw.lower()}%")
         if hidden and _HAS_INTEL:
             clauses.append("hidden_tier >= 1")
 
@@ -1383,6 +1386,28 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
         all_jobs = [j for j in all_jobs if title_looks_english(j.get("title", ""))]
     elif effective_lang == "nl":
         all_jobs = [j for j in all_jobs if title_looks_dutch(j.get("title", ""))]
+
+    if remote:
+        remote_markers = ("remote", "hybrid", "thuiswerk", "work from home", "wfh", "anywhere")
+        def _is_remote(j):
+            blob = (
+                (j.get("location_raw") or "") + " "
+                + (j.get("title") or "") + " "
+                + (j.get("city") or "")
+            ).lower()
+            return any(m in blob for m in remote_markers)
+        all_jobs = [j for j in all_jobs if _is_remote(j)]
+
+    if job_type:
+        _JT = {
+            "fulltime": ("full",),
+            "parttime": ("part",),
+            "internship": ("intern", "stage", "afstudeer", "werkstudent", "graduate", "trainee"),
+            "contract": ("contract", "freelance", "interim", "tijdelijk", "temporary", "zzp"),
+        }
+        subs = _JT.get(job_type.lower())
+        if subs:
+            all_jobs = [j for j in all_jobs if any(s in (j.get("job_type") or "").lower() for s in subs)]
 
     with _AGG_CACHE_LOCK:
         if len(_AGG_CACHE) >= _AGG_CACHE_MAX:
@@ -1514,6 +1539,22 @@ def admin_run_cron(request: Request, skip_alerts: bool = False, full: bool = Fal
     return result
 
 
+# Role filter -> title keyword. Keyword-based (approximate) but lets seekers
+# browse by field without typing. Mirrors/extends the front-end role hubs.
+ROLE_KEYWORDS = {
+    "engineering": "engineer",
+    "developer": "developer",
+    "data": "data",
+    "product": "product manager",
+    "design": "designer",
+    "devops": "devops",
+    "security": "security",
+    "marketing": "marketing",
+    "sales": "sales",
+    "finance": "financ",
+}
+
+
 @app.get("/jobs")
 def jobs(
     company: str | None = Query(default=None),
@@ -1523,14 +1564,19 @@ def jobs(
     english_only: bool = Query(default=False),
     new_today_only: bool = Query(default=False),
     hidden: bool = Query(default=False),
+    role: str | None = Query(default=None),
+    job_type: str | None = Query(default=None),
+    remote: bool = Query(default=False),
     sort: str = Query(default="newest"),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=100, ge=1, le=500),
 ):
     """Job listings. Defaults to Netherlands; pass country=all for everything.
     hidden=true returns only jobs unlikely to appear on big job boards.
+    role/job_type/remote narrow by field, employment type, and remote-friendliness.
     sort: newest (default) or company."""
-    all_jobs = [j for j in aggregate_jobs(company, q, country, city, english_only, new_today_only, hidden=hidden) if not j.get("_placeholder")]
+    role_kw = ROLE_KEYWORDS.get((role or "").lower()) if role else None
+    all_jobs = [j for j in aggregate_jobs(company, q, country, city, english_only, new_today_only, hidden=hidden, role_kw=role_kw, job_type=job_type, remote=remote) if not j.get("_placeholder")]
     if sort == "newest":
         # sorted() copies -- never mutate the shared cache entry
         all_jobs = sorted(all_jobs, key=lambda j: j.get("updated_at") or "", reverse=True)
