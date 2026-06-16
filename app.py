@@ -1593,6 +1593,119 @@ def import_status(request: Request):
     return {"last_import": _last_import}
 
 
+@app.post("/admin/ingest-jobs")
+async def ingest_jobs(request: Request):
+    """ADDITIVE-ONLY job ingest for the scraper service.
+
+    SAFETY CONTRACT (this is the whole point of this endpoint): it can ONLY
+    insert new jobs or refresh existing ones (set is_active=1, bump
+    last_seen_at). It NEVER sets is_active=0, NEVER deletes, NEVER runs
+    stale-expiry, and NEVER does a 'deactivate the ones not in this batch'
+    sweep. A buggy, partial, or empty scrape therefore CANNOT remove or hide
+    live jobs -- worst case it adds a few rows. The web service alone owns
+    deactivation (deactivate_stale_jobs) and ATS closures.
+
+    This replaces the daily_intelligence.py -> /admin/import-bundle path, which
+    pushed full-DB dumps with is_active=0 and wiped the live site on 2026-06-16.
+
+    Body: {"jobs":[{source, company_name, job_key, title, url|apply_url,
+                    location_raw?, country?, city?, posted_at?, department?,
+                    job_type?, tech_tags?, hidden_score?, hidden_tier?,
+                    description?}, ...],
+           "companies":[{name, source, token, confidence?}, ...]}  # both optional
+    """
+    err, code = _check_admin(request)
+    if err:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(err, status_code=code)
+
+    body = await request.json()
+    jobs = body.get("jobs") or []
+    companies = body.get("companies") or []
+    now = datetime.now(timezone.utc).isoformat()
+
+    new = refreshed = skipped = companies_upserted = 0
+    with sqlite3.connect(DB_FILE) as conn:
+        if _HAS_INTEL:
+            job_intel.ensure_intel_tables(conn)
+
+        # Companies: additive upsert only (never marks a company inactive).
+        for c in companies:
+            name = (c.get("name") or "").strip()
+            source = (c.get("source") or "").strip()
+            token = (c.get("token") or "").strip()
+            if not (name and source and token):
+                continue
+            try:
+                conn.execute(
+                    """INSERT INTO companies (name, source, token, active, confidence, discovered_at, last_verified_at)
+                       VALUES (?, ?, ?, 1, ?, ?, ?)
+                       ON CONFLICT(source, token) DO UPDATE SET
+                         name=excluded.name, last_verified_at=excluded.last_verified_at""",
+                    (name, source, token, c.get("confidence", "scraper"), now, now),
+                )
+                companies_upserted += 1
+            except Exception:
+                pass
+
+        # Jobs: insert-or-refresh only. is_active is ALWAYS forced to 1 here --
+        # the payload's is_active (if any) is deliberately ignored. hidden_tier
+        # is only set on INSERT; on refresh we preserve whatever the web service
+        # computed (its daily recompute owns tiering).
+        for jd in jobs:
+            source = (jd.get("source") or "").strip()
+            company_name = (jd.get("company_name") or "").strip()
+            title = (jd.get("title") or "").strip()
+            job_key = (jd.get("job_key") or "").strip()
+            url = jd.get("apply_url") or jd.get("url") or ""
+            if not (source and company_name and title and job_key):
+                skipped += 1
+                continue
+            exists = conn.execute(
+                "SELECT 1 FROM jobs WHERE source=? AND job_key=?", (source, job_key)
+            ).fetchone()
+            conn.execute(
+                """INSERT INTO jobs
+                     (source, company_name, job_key, title, location_raw, country, city,
+                      url, department, job_type, tech_tags, hidden_score, hidden_tier,
+                      description, posted_at, first_seen_at, last_seen_at, is_active)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                   ON CONFLICT(source, job_key) DO UPDATE SET
+                     company_name=excluded.company_name, title=excluded.title,
+                     location_raw=excluded.location_raw, country=excluded.country,
+                     city=excluded.city, url=excluded.url,
+                     department=excluded.department, job_type=excluded.job_type,
+                     tech_tags=excluded.tech_tags,
+                     description=CASE WHEN excluded.description!='' THEN excluded.description ELSE jobs.description END,
+                     posted_at=COALESCE(excluded.posted_at, jobs.posted_at),
+                     last_seen_at=excluded.last_seen_at,
+                     is_active=1""",
+                (source, company_name, job_key, title,
+                 jd.get("location_raw", "") or "", jd.get("country") or None, jd.get("city") or None,
+                 url, jd.get("department", "") or "", jd.get("job_type", "") or "",
+                 jd.get("tech_tags", "") or "",
+                 int(jd.get("hidden_score") or 0), int(jd.get("hidden_tier") or 0),
+                 (jd.get("description") or "")[:1500], jd.get("posted_at") or None,
+                 now, now),
+            )
+            if exists:
+                refreshed += 1
+            else:
+                new += 1
+        conn.commit()
+        try:
+            active_total = conn.execute("SELECT COUNT(*) FROM jobs WHERE is_active=1").fetchone()[0]
+        except Exception:
+            active_total = None
+
+    try:
+        _agg_cache_clear()
+    except Exception:
+        pass
+    return {"ok": True, "new": new, "refreshed": refreshed, "skipped": skipped,
+            "companies_upserted": companies_upserted, "active_jobs_after": active_total}
+
+
 @app.get("/admin/cron-status")
 def cron_status(request: Request):
     """Report the last daily-refresh cron run (ATS sync + stats + alerts)."""
