@@ -190,6 +190,16 @@ def _import_bundle_data(data: dict) -> dict:
 # ----------------------------
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
+        # WAL lets reads and writes run concurrently without "database is locked"
+        # errors -- the root cause of jobs/gems intermittently vanishing while the
+        # cron or scraper writes. WAL is persistent on the DB file, so every later
+        # connection inherits it. busy_timeout makes a writer wait briefly for
+        # another writer instead of erroring out immediately.
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+        except Exception:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS companies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1342,8 +1352,9 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
             cached = entry[1]
             return cached[:limit] if limit else cached
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, timeout=5.0) as conn:
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
         if _HAS_INTEL:
             job_intel.ensure_intel_tables(conn)
 
@@ -1436,26 +1447,45 @@ def aggregate_jobs(company=None, q=None, country=None, city=None, english_only=F
         if subs:
             all_jobs = [j for j in all_jobs if any(s in (j.get("job_type") or "").lower() for s in subs)]
 
-    # "Verified hidden" = a gem that was checked against the boards and NOT found.
-    # Until the verification table is populated, no job is verified (graceful).
+    # "Verified hidden" = a gem checked against the boards and NOT found.
+    # If this lookup fails (e.g. a transient write lock), do NOT silently treat
+    # every job as non-hidden and then cache that empty result -- that bug made
+    # hidden gems "disappear" for 10+ minutes at a time. Instead: wait out a
+    # brief writer (timeout), and on failure serve the last good result and skip
+    # caching so the next request just retries.
+    verified_ok = True
+    verified_set = set()
     try:
-        with sqlite3.connect(DB_FILE) as _vc:
+        with sqlite3.connect(DB_FILE, timeout=5.0) as _vc:
             verified_set = {row[0] for row in _vc.execute(
                 "SELECT job_key FROM gem_verifications WHERE on_boards = 0"
             ).fetchall()}
     except sqlite3.OperationalError:
-        verified_set = set()
+        verified_ok = False
+
+    if hidden and not verified_ok:
+        # Couldn't determine verified gems this time -> serve the last good
+        # cached hidden result (even if its TTL expired) instead of an empty
+        # page, and don't overwrite the cache with a junk (empty) result.
+        with _AGG_CACHE_LOCK:
+            stale = _AGG_CACHE.get(cache_key)
+        if stale:
+            return stale[1][:limit] if limit else stale[1]
+        return []
+
     for j in all_jobs:
         j["verified_hidden"] = bool(j.get("hidden_tier", 0) >= 2 and j.get("job_key") in verified_set)
     if hidden:
         all_jobs = [j for j in all_jobs if j["verified_hidden"]]
 
-    with _AGG_CACHE_LOCK:
-        if len(_AGG_CACHE) >= _AGG_CACHE_MAX:
-            # Evict the oldest entry to bound memory
-            oldest = min(_AGG_CACHE, key=lambda k: _AGG_CACHE[k][0])
-            _AGG_CACHE.pop(oldest, None)
-        _AGG_CACHE[cache_key] = (now_ts, all_jobs)
+    # Only cache results computed from successful queries.
+    if verified_ok:
+        with _AGG_CACHE_LOCK:
+            if len(_AGG_CACHE) >= _AGG_CACHE_MAX:
+                # Evict the oldest entry to bound memory
+                oldest = min(_AGG_CACHE, key=lambda k: _AGG_CACHE[k][0])
+                _AGG_CACHE.pop(oldest, None)
+            _AGG_CACHE[cache_key] = (now_ts, all_jobs)
 
     return all_jobs[:limit] if limit else all_jobs
 
