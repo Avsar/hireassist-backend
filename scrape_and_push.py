@@ -18,7 +18,8 @@ Railway scraper service start command:
     python scrape_and_push.py
 Required env: RENDER_URL (web app base URL), ADMIN_TOKEN.
 Optional env: GOOGLE_PLACES_API_KEY, KVK_API_KEY, ANTHROPIC_API_KEY (discovery),
-    CRON_REGION (default "Netherlands"), CRON_DISCOVER_LIMIT (default "200"),
+    CRON_REGION (default "Netherlands"), CRON_DISCOVER_LIMIT (OSM, default "400"),
+    CRON_KVK_LIMIT (KVK registry, default "400", "0" disables),
     DISCOVER_TIMEOUT, SCRAPE_TIMEOUT, ATS_TIMEOUT, INGEST_BATCH (default 500),
     SKIP_DISCOVER=1 to skip discovery.
 Do NOT set a Railway volume or DB_PATH=/data here -- the local DB is disposable.
@@ -45,7 +46,8 @@ DB_FILE = get_db_path()
 RENDER_URL = os.environ.get("RENDER_URL", "").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 REGION = os.environ.get("CRON_REGION", "Netherlands")
-DISC_LIMIT = os.environ.get("CRON_DISCOVER_LIMIT", "200")
+DISC_LIMIT = os.environ.get("CRON_DISCOVER_LIMIT", "400")  # OSM candidates probed per run
+KVK_LIMIT = os.environ.get("CRON_KVK_LIMIT", "400")        # KVK candidates probed per run ("0" disables)
 BATCH = int(os.environ.get("INGEST_BATCH", "500"))
 
 
@@ -84,8 +86,18 @@ def main() -> int:
     py = sys.executable
 
     if os.environ.get("SKIP_DISCOVER", "").strip() != "1":
-        run_step("Discovery (OSM)", [py, "agent_discover.py", "--region", REGION, "--limit", DISC_LIMIT],
-                 int(os.environ.get("DISCOVER_TIMEOUT", "1800")))
+        disc_timeout = int(os.environ.get("DISCOVER_TIMEOUT", "1800"))
+        # OSM: businesses mapped on OpenStreetMap (a thin, biased slice).
+        run_step("Discovery (OSM)",
+                 [py, "agent_discover.py", "--source", "osm", "--region", REGION, "--limit", DISC_LIMIT],
+                 disc_timeout)
+        # KVK: the official Dutch business registry -- far more small/obscure
+        # employers, exactly the ones whose jobs don't reach LinkedIn. No-op if
+        # KVK_API_KEY is unset; set CRON_KVK_LIMIT=0 to disable.
+        if KVK_LIMIT != "0":
+            run_step("Discovery (KVK)",
+                     [py, "agent_discover.py", "--source", "kvk", "--region", REGION, "--limit", KVK_LIMIT],
+                     disc_timeout)
     run_step("Career Page Scrape", [py, "agent_scrape.py"],
              int(os.environ.get("SCRAPE_TIMEOUT", "3600")))
     run_step("ATS Sync", [py, "sync_ats_jobs.py"],
