@@ -391,9 +391,10 @@ def match_jobs_for_alert(conn: sqlite3.Connection, filters: dict, today: str | N
         clauses.append("LOWER(title) LIKE ?")
         params.append(f"%{q.lower()}%")
 
-    # Hidden gems only (career-page scrapes + low-visibility small companies)
+    # Hidden gems only -> gem-tier (>=2); verified-only filter applied below so the
+    # alert matches the site's "verified hidden gem" promise.
     if filters.get("hidden"):
-        clauses.append("hidden_tier >= 1")
+        clauses.append("hidden_tier >= 2")
 
     where = " AND ".join(clauses)
     rows = conn.execute(f"SELECT * FROM jobs WHERE {where} ORDER BY company_name, title", params).fetchall()
@@ -408,7 +409,19 @@ def match_jobs_for_alert(conn: sqlite3.Connection, filters: dict, today: str | N
             "location_raw": r["location_raw"] or "",
             "url": r["url"] or "",
             "tech_tags": (r["tech_tags"] if "tech_tags" in r.keys() else "") or "",
+            "job_key": (r["job_key"] if "job_key" in r.keys() else "") or "",
         })
+
+    # Restrict hidden-gem alerts to VERIFIED gems (checked against the boards and
+    # not found). Falls back to hidden_tier>=2 if the verification table is missing.
+    if filters.get("hidden"):
+        try:
+            verified = {row[0] for row in conn.execute(
+                "SELECT job_key FROM gem_verifications WHERE on_boards = 0"
+            ).fetchall()}
+            jobs = [j for j in jobs if j.get("job_key") in verified]
+        except sqlite3.OperationalError:
+            pass
 
     # Country filter
     country = filters.get("country", "")
@@ -474,6 +487,8 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
     display_jobs = jobs[:25]
     remaining = len(jobs) - 25 if len(jobs) > 25 else 0
 
+    is_hidden = bool(filters.get("hidden"))
+    gem = "&#128142; " if is_hidden else ""
     job_rows = ""
     for j in display_jobs:
         title = j.get("title", "")
@@ -483,7 +498,7 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
         loc = f" -- {city}" if city else ""
         job_rows += f"""\
 <tr><td style="padding:12px 0;border-bottom:1px solid #f3f4f6;">
-  <a href="{url}" style="color:#0d9488;font-weight:600;font-size:14px;text-decoration:none;">{title}</a>
+  <a href="{url}" style="color:#0d9488;font-weight:600;font-size:14px;text-decoration:none;">{gem}{title}</a>
   <div style="color:#6b7280;font-size:12px;margin-top:2px;">{company}{loc}</div>
 </td></tr>
 """
@@ -494,13 +509,19 @@ def _build_digest_html(jobs: list[dict], filters: dict, token: str) -> str:
 
     count = len(jobs)
     s = "s" if count != 1 else ""
+    if is_hidden:
+        heading = f"&#128142; {count} new hidden gem{s} for you"
+        subhead = "Verified hidden \u2014 we checked LinkedIn and Indeed and couldn't find these there."
+    else:
+        heading = f"{count} new job{s} matching your alert"
+        subhead = f"Filters: {filter_summary}"
     return f"""\
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:20px;">
   <div style="text-align:center;margin-bottom:20px;">
     <span style="font-size:20px;font-weight:800;color:#0f172a;">CubeA</span>
   </div>
-  <h2 style="color:#0f172a;font-size:18px;margin-bottom:4px;">{count} new job{s} matching your alert</h2>
-  <p style="color:#6b7280;font-size:13px;margin-bottom:20px;">Filters: {filter_summary}</p>
+  <h2 style="color:#0f172a;font-size:18px;margin-bottom:4px;">{heading}</h2>
+  <p style="color:#6b7280;font-size:13px;margin-bottom:20px;">{subhead}</p>
   <table style="width:100%;border-collapse:collapse;">{job_rows}</table>
   {more_text}
   <div style="margin-top:24px;text-align:center;">
@@ -543,7 +564,10 @@ def send_daily_digests(today: str | None = None) -> dict:
             html = _build_digest_html(matched, filters, alert["token"])
             count = len(matched)
             s = "s" if count != 1 else ""
-            subject = f"{count} new job{s} matching your CubeA alert"
+            if filters.get("hidden"):
+                subject = f"\U0001f48e {count} new hidden gem{s} \u2014 not on LinkedIn"
+            else:
+                subject = f"{count} new job{s} matching your CubeA alert"
             _send_email(alert["email"], subject, html)
 
             now = datetime.now(timezone.utc).isoformat()
