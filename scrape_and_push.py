@@ -19,7 +19,8 @@ Railway scraper service start command:
 Required env: RENDER_URL (web app base URL), ADMIN_TOKEN.
 Optional env: GOOGLE_PLACES_API_KEY, KVK_API_KEY, ANTHROPIC_API_KEY (discovery),
     CRON_REGION (default "Netherlands"), CRON_DISCOVER_LIMIT (OSM, default "400"),
-    CRON_KVK_LIMIT (KVK registry, default "400", "0" disables),
+    CRON_KVK_LIMIT (KVK registry, default "0"=OFF; set >0 to enable -- the
+        Basisprofiel website lookup costs ~EUR 0.02 per candidate probed),
     DISCOVER_TIMEOUT, SCRAPE_TIMEOUT, ATS_TIMEOUT, INGEST_BATCH (default 500),
     SKIP_DISCOVER=1 to skip discovery.
 Do NOT set a Railway volume or DB_PATH=/data here -- the local DB is disposable.
@@ -46,8 +47,11 @@ DB_FILE = get_db_path()
 RENDER_URL = os.environ.get("RENDER_URL", "").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 REGION = os.environ.get("CRON_REGION", "Netherlands")
-DISC_LIMIT = os.environ.get("CRON_DISCOVER_LIMIT", "400")  # OSM candidates probed per run
-KVK_LIMIT = os.environ.get("CRON_KVK_LIMIT", "400")        # KVK candidates probed per run ("0" disables)
+DISC_LIMIT = os.environ.get("CRON_DISCOVER_LIMIT", "400")  # OSM candidates probed per run (free)
+# KVK is OFF by default: the Basisprofiel website lookup costs ~EUR 0.02 per
+# candidate (KVK search itself is free). Set CRON_KVK_LIMIT > 0 to enable, and
+# remember each unit of the limit is roughly EUR 0.02/run -> e.g. 50 ~= EUR 1/run.
+KVK_LIMIT = os.environ.get("CRON_KVK_LIMIT", "0")
 BATCH = int(os.environ.get("INGEST_BATCH", "500"))
 
 
