@@ -1654,6 +1654,28 @@ def desc_status(request: Request):
     }
 
 
+@app.post("/admin/enrich-descriptions")
+def admin_enrich_descriptions(
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=5000),
+    background: bool = Query(default=False),
+):
+    """Backfill careers_page (hidden-gem) descriptions by fetching each job's
+    page. Column-only update -- never touches is_active or other rows. Small
+    limits run inline; background=true kicks off a larger batch in a thread
+    (poll /admin/desc-status to watch the careers_page fill_pct climb)."""
+    from fastapi.responses import JSONResponse
+    err, code = _check_admin(request)
+    if err:
+        return JSONResponse(err, status_code=code)
+    import enrich_descriptions as _enr
+    if background:
+        threading.Thread(target=lambda: _enr.enrich_descriptions(limit=limit), daemon=True).start()
+        return {"ok": True, "started": True, "limit": limit,
+                "note": "running in background; re-check /admin/desc-status"}
+    return _enr.enrich_descriptions(limit=limit)
+
+
 @app.post("/admin/import-bundle")
 async def import_bundle(request: Request):
     global _last_import

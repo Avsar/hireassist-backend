@@ -155,6 +155,19 @@ def run(skip_alerts: bool = False, full: bool = False) -> dict:
         results["steps"]["verify_gems"] = {"ok": False, "error": str(e)}
         print(f"[cron] Verify gems FAILED: {e}")
 
+    # Step 2c: Backfill careers_page (hidden-gem) descriptions. Bounded batch,
+    # column-only updates. Set CRON_ENRICH_LIMIT=0 to disable.
+    try:
+        elimit = int(os.environ.get("CRON_ENRICH_LIMIT", "150"))
+        if elimit > 0:
+            import enrich_descriptions
+            eres = enrich_descriptions.enrich_descriptions(limit=elimit)
+            results["steps"]["enrich_descriptions"] = eres
+            print(f"[cron] Enrich descriptions: {eres}")
+    except Exception as e:
+        results["steps"]["enrich_descriptions"] = {"ok": False, "error": str(e)}
+        print(f"[cron] Enrich descriptions FAILED: {e}")
+
     # Step 3: Alerts
     if skip_alerts:
         results["steps"]["alerts"] = {"ok": True, "skipped": True}
