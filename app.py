@@ -530,6 +530,26 @@ def sr_list_jobs(company_identifier: str):
     return data.get("content", [])
 
 
+def sr_get_description(company_identifier: str, posting_id: str) -> str:
+    """Fetch a SmartRecruiters posting's job-ad body. The list endpoint omits it,
+    so we hit the posting-detail endpoint and stitch its sections into plain text.
+    Returns '' on any failure (never breaks the sync)."""
+    if not posting_id:
+        return ""
+    url = f"https://api.smartrecruiters.com/v1/companies/{company_identifier}/postings/{posting_id}"
+    try:
+        data = http_get_json(url, timeout=30, retries=1)
+    except Exception:
+        return ""
+    sections = ((data or {}).get("jobAd") or {}).get("sections") or {}
+    parts = []
+    for key in ("companyDescription", "jobDescription", "qualifications", "additionalInformation"):
+        text = ((sections.get(key) or {}).get("text") or "").strip()
+        if text:
+            parts.append(text)
+    return make_description("\n\n".join(parts)) if parts else ""
+
+
 # ----------------------------
 # Source: Recruitee
 # ----------------------------
@@ -1154,6 +1174,7 @@ def normalize_jobs(company_name: str, source: str, token: str):
                 "department": (j.get("department") or {}).get("label", "") or "",
                 "job_type": (j.get("typeOfEmployment") or {}).get("label", "") or "",
                 "snippet": "",
+                "description": sr_get_description(token, posting_id),
                 "location_raw": loc_raw,
                 "city": city,
                 "country": country,
