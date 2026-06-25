@@ -1594,6 +1594,45 @@ def admin_gem_status(request: Request):
     })
 
 
+@app.get("/admin/desc-status")
+def desc_status(request: Request):
+    """Description fill-rate by source for active jobs -- diagnostic for the
+    job-detail 'About this role' gap. Read-only; touches no data."""
+    err, code = _check_admin(request)
+    if err:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(err, status_code=code)
+    rows = []
+    overall_total = overall_with = 0
+    try:
+        with sqlite3.connect(DB_FILE, timeout=5.0) as conn:
+            for source, total, with_desc in conn.execute(
+                """SELECT source, COUNT(*),
+                          SUM(CASE WHEN description IS NOT NULL AND TRIM(description) != ''
+                                   THEN 1 ELSE 0 END)
+                   FROM jobs WHERE is_active = 1
+                   GROUP BY source ORDER BY COUNT(*) DESC"""
+            ).fetchall():
+                with_desc = with_desc or 0
+                overall_total += total
+                overall_with += with_desc
+                rows.append({
+                    "source": source,
+                    "active_jobs": total,
+                    "with_description": with_desc,
+                    "fill_pct": round(100 * with_desc / total, 1) if total else 0,
+                })
+    except sqlite3.OperationalError as e:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return {
+        "by_source": rows,
+        "overall_active_jobs": overall_total,
+        "overall_with_description": overall_with,
+        "overall_fill_pct": round(100 * overall_with / overall_total, 1) if overall_total else 0,
+    }
+
+
 @app.post("/admin/import-bundle")
 async def import_bundle(request: Request):
     global _last_import
