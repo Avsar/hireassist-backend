@@ -15,6 +15,7 @@ remain blank until/unless we add an AI or headless pass later.
 """
 
 import logging
+import re
 import sqlite3
 import time
 
@@ -41,6 +42,30 @@ def _extract(html: str) -> str:
     return "\n".join(lines).strip()[:MAX_LEN]
 
 
+# Filler words that shouldn't count toward "does this text match the job title".
+_STOP = {
+    "voor", "naar", "met", "een", "het", "van", "and", "the", "for", "with",
+    "senior", "junior", "medior", "stage", "stagiair", "intern", "manager",
+}
+
+
+def _significant_title_words(title: str) -> set:
+    words = re.findall(r"[a-zA-Zà-ÿ]{4,}", (title or "").lower())
+    return {w for w in words if w not in _STOP}
+
+
+def _relevant(title: str, text: str) -> bool:
+    """True if the extracted text plausibly describes THIS job. Guards against
+    readability grabbing an agency/listing page full of OTHER roles (which is
+    worse than no description). If the title has no usable words, we keep it."""
+    words = _significant_title_words(title)
+    if not words:
+        return True
+    low = (text or "").lower()
+    hits = sum(1 for w in words if w in low)
+    return hits / len(words) >= 0.34
+
+
 def enrich_descriptions(limit: int = 150) -> dict:
     """Fetch + extract descriptions for up to `limit` active careers_page jobs
     that currently have none. Column-only updates; returns a summary."""
@@ -48,7 +73,7 @@ def enrich_descriptions(limit: int = 150) -> dict:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        """SELECT id, url FROM jobs
+        """SELECT id, url, title FROM jobs
            WHERE source = 'careers_page' AND is_active = 1
              AND (description IS NULL OR TRIM(description) = '')
              AND url IS NOT NULL AND url != ''
@@ -57,7 +82,7 @@ def enrich_descriptions(limit: int = 150) -> dict:
         (limit,),
     ).fetchall()
 
-    updated = skipped = errors = 0
+    updated = skipped = irrelevant = errors = 0
     for r in rows:
         try:
             resp = requests.get(r["url"], headers=HEADERS, timeout=12)
@@ -68,6 +93,9 @@ def enrich_descriptions(limit: int = 150) -> dict:
             desc = _extract(resp.text)
             if len(desc) < MIN_LEN:
                 skipped += 1  # likely JS-rendered or not a real description page
+                continue
+            if not _relevant(r["title"], desc):
+                irrelevant += 1  # readability grabbed the wrong page (listing/agency)
                 continue
             conn.execute("UPDATE jobs SET description = ? WHERE id = ?", (desc, r["id"]))
             conn.commit()
@@ -89,6 +117,34 @@ def enrich_descriptions(limit: int = 150) -> dict:
         "checked": len(rows),
         "updated": updated,
         "skipped": skipped,
+        "irrelevant": irrelevant,
         "errors": errors,
         "still_missing": remaining,
     }
+
+
+def revalidate_descriptions(limit: int = 5000) -> dict:
+    """Quality sweep: re-check already-stored careers_page descriptions against
+    their job title and BLANK any that don't match the role (e.g. listing/agency
+    pages readability grabbed). No network -- just re-applies the relevance gate
+    to text we already have, so a wrong description becomes a clean empty state."""
+    conn = sqlite3.connect(DB_FILE, timeout=10.0)
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT id, title, description FROM jobs
+           WHERE source = 'careers_page' AND is_active = 1
+             AND description IS NOT NULL AND TRIM(description) != ''
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    kept = blanked = 0
+    for r in rows:
+        if _relevant(r["title"], r["description"]):
+            kept += 1
+        else:
+            conn.execute("UPDATE jobs SET description = '' WHERE id = ?", (r["id"],))
+            blanked += 1
+    conn.commit()
+    conn.close()
+    return {"ok": True, "checked": len(rows), "kept": kept, "blanked": blanked}

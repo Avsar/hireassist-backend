@@ -1659,16 +1659,21 @@ def admin_enrich_descriptions(
     request: Request,
     limit: int = Query(default=200, ge=1, le=5000),
     background: bool = Query(default=False),
+    revalidate: bool = Query(default=False),
 ):
     """Backfill careers_page (hidden-gem) descriptions by fetching each job's
     page. Column-only update -- never touches is_active or other rows. Small
     limits run inline; background=true kicks off a larger batch in a thread
-    (poll /admin/desc-status to watch the careers_page fill_pct climb)."""
+    (poll /admin/desc-status to watch the careers_page fill_pct climb).
+    revalidate=true skips fetching and just re-checks already-stored descriptions
+    against their title, blanking ones that grabbed the wrong page (cleanup)."""
     from fastapi.responses import JSONResponse
     err, code = _check_admin(request)
     if err:
         return JSONResponse(err, status_code=code)
     import enrich_descriptions as _enr
+    if revalidate:
+        return _enr.revalidate_descriptions(limit=limit)
     if background:
         threading.Thread(target=lambda: _enr.enrich_descriptions(limit=limit), daemon=True).start()
         return {"ok": True, "started": True, "limit": limit,
