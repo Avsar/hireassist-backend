@@ -359,8 +359,13 @@ def _names_match(norm_name: str, norm_board: str, domain_base: str) -> bool:
 # Career page detection + domain verification
 # ---------------------------------------------------------------------------
 CAREER_PATHS = [
-    "/careers", "/jobs", "/en/careers", "/en/jobs",
-    "/vacatures", "/work-with-us", "/join-us",
+    # Dutch first -- most small NL employers use these (this is the long tail
+    # KVK surfaces, and /werken-bij is the single most common Dutch path).
+    "/werken-bij", "/vacatures", "/vacature", "/werkenbij",
+    "/over-ons/vacatures", "/over-ons/werken-bij", "/wij-zoeken",
+    # English / international
+    "/careers", "/jobs", "/vacancies", "/en/careers", "/en/jobs",
+    "/en/vacancies", "/work-with-us", "/join-us",
     "/careers/open-positions", "/company/careers",
 ]
 
@@ -426,21 +431,25 @@ def find_careers_page_verified(
             return None, None
 
     base = f"https://{domain}"
+    last_reason = None
     for path in CAREER_PATHS:
         result, reason = _check(base + path)
         if result:
             return result, None
+        # A single off-domain redirect (e.g. /careers -> a marketing CMS) must
+        # NOT abort the search -- remember the reason but keep trying the other
+        # paths and subdomains, which may well find the real careers page.
         if reason:
-            return None, reason
+            last_reason = reason
 
     for sub in ("careers", "jobs"):
         result, reason = _check(f"https://{sub}.{domain}")
         if result:
             return result, None
         if reason:
-            return None, reason
+            last_reason = reason
 
-    return None, None
+    return None, last_reason
 
 
 # ---------------------------------------------------------------------------

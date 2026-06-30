@@ -1143,7 +1143,8 @@ def save_jobs(conn: sqlite3.Connection, company_name: str, career_url: str,
 # ---------------------------------------------------------------------------
 
 def run(company_filter: str | None = None, dry_run: bool = False,
-        debug_company: str | None = None):
+        debug_company: str | None = None,
+        max_companies: int = 0, time_budget: int = 0):
     conn = sqlite3.connect(DB_FILE)
     ensure_scraped_jobs_table(conn)
     companies = get_careers_page_companies(conn)
@@ -1160,6 +1161,21 @@ def run(company_filter: str | None = None, dry_run: bool = False,
             print(f"Company '{company_filter}' not found in DB with source='careers_page'")
             conn.close()
             return
+
+    # Rotating window (Feature 8): the full Playwright pass is far too slow to
+    # finish in one cron window (~287 companies/hour), so a fixed alphabetical
+    # scrape never reaches the back half of the list. When a per-run cap is set
+    # (cron path), scrape only a contiguous slice whose start advances by day --
+    # so the whole set is covered over several nights and each run stays bounded.
+    # The fast ATS API sync (sync_ats_jobs.py) still refreshes the bulk nightly.
+    if max_companies and not company_filter and len(companies) > max_companies:
+        n = len(companies)
+        day = datetime.now(timezone.utc).timetuple().tm_yday
+        start = (day * max_companies) % n
+        rotated = companies[start:] + companies[:start]
+        companies = rotated[:max_companies]
+        print(f"  Rotating window: {max_companies} of {n} careers_page companies "
+              f"(day {day}, offset {start})")
 
     print(f"{'[DRY RUN] ' if dry_run else ''}Scraping {len(companies)} career pages with Playwright...\n")
 
@@ -1182,7 +1198,16 @@ def run(company_filter: str | None = None, dry_run: bool = False,
         context.set_default_timeout(30000)
         page = context.new_page()
 
+        budget_start = time.monotonic()
+
         for company_name, career_url in companies:
+            # Wall-clock budget: exit cleanly (per-company commits are already
+            # saved) instead of being hard-killed mid-page by the outer timeout.
+            if time_budget and (time.monotonic() - budget_start) > time_budget:
+                print(f"\n  Time budget ({time_budget}s) reached -- stopping after "
+                      f"{stats['attempted']} companies; the rest roll to the next run.")
+                break
+
             stats["attempted"] += 1
             if debug:
                 print(f"\n{'='*60}")
@@ -1276,6 +1301,12 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Print results without writing to DB")
     parser.add_argument("--debug-company", metavar="NAME",
                         help="Scrape a single company with detailed debug output")
+    parser.add_argument("--max-companies", type=int, default=0,
+                        help="Per-run cap: scrape a rotating window of this many "
+                             "companies that advances by day (0 = scrape all)")
+    parser.add_argument("--time-budget", type=int, default=0,
+                        help="Stop cleanly after this many seconds (0 = unlimited)")
     args = parser.parse_args()
     run(company_filter=args.company, dry_run=args.dry_run,
-        debug_company=args.debug_company)
+        debug_company=args.debug_company,
+        max_companies=args.max_companies, time_budget=args.time_budget)

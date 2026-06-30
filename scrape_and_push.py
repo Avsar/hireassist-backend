@@ -22,6 +22,8 @@ Optional env: GOOGLE_PLACES_API_KEY, KVK_API_KEY, ANTHROPIC_API_KEY (discovery),
     CRON_KVK_LIMIT (KVK registry, default "0"=OFF; set >0 to enable -- the
         Basisprofiel website lookup costs ~EUR 0.02 per candidate probed),
     DISCOVER_TIMEOUT, SCRAPE_TIMEOUT, ATS_TIMEOUT, INGEST_BATCH (default 500),
+    CRON_SCRAPE_MAX (careers_page companies per run, rotating window, default 300),
+    CRON_SCRAPE_BUDGET (career-scrape wall-clock seconds, default 3300),
     SKIP_DISCOVER=1 to skip discovery.
 Do NOT set a Railway volume or DB_PATH=/data here -- the local DB is disposable.
 """
@@ -91,10 +93,13 @@ def main() -> int:
 
     if os.environ.get("SKIP_DISCOVER", "").strip() != "1":
         disc_timeout = int(os.environ.get("DISCOVER_TIMEOUT", "1800"))
-        # OSM: businesses mapped on OpenStreetMap (a thin, biased slice).
-        run_step("Discovery (OSM)",
-                 [py, "agent_discover.py", "--source", "osm", "--region", REGION, "--limit", DISC_LIMIT],
-                 disc_timeout)
+        # OSM: businesses mapped on OpenStreetMap. The whole-country query is slow
+        # and currently returns 0, so set CRON_DISCOVER_LIMIT=0 to skip it (KVK is
+        # the real discovery engine now).
+        if DISC_LIMIT != "0":
+            run_step("Discovery (OSM)",
+                     [py, "agent_discover.py", "--source", "osm", "--region", REGION, "--limit", DISC_LIMIT],
+                     disc_timeout)
         # KVK: the official Dutch business registry -- far more small/obscure
         # employers, exactly the ones whose jobs don't reach LinkedIn. No-op if
         # KVK_API_KEY is unset; set CRON_KVK_LIMIT=0 to disable.
@@ -102,7 +107,16 @@ def main() -> int:
             run_step("Discovery (KVK)",
                      [py, "agent_discover.py", "--source", "kvk", "--region", REGION, "--limit", KVK_LIMIT],
                      disc_timeout)
-    run_step("Career Page Scrape", [py, "agent_scrape.py"],
+    # Career-page (Playwright) scrape is slow (~287 companies/hour) and the full
+    # list no longer fits one cron window, so we scrape a rotating day-advancing
+    # window (CRON_SCRAPE_MAX) and exit cleanly at a wall-clock budget
+    # (CRON_SCRAPE_BUDGET) just under SCRAPE_TIMEOUT. Full coverage rolls across
+    # several nights; ATS sync below still refreshes the bulk every run.
+    scrape_max = os.environ.get("CRON_SCRAPE_MAX", "300")
+    scrape_budget = os.environ.get("CRON_SCRAPE_BUDGET", "3300")
+    run_step("Career Page Scrape",
+             [py, "agent_scrape.py",
+              "--max-companies", scrape_max, "--time-budget", scrape_budget],
              int(os.environ.get("SCRAPE_TIMEOUT", "3600")))
     run_step("ATS Sync", [py, "sync_ats_jobs.py"],
              int(os.environ.get("ATS_TIMEOUT", "1800")))
