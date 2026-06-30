@@ -1654,6 +1654,48 @@ def desc_status(request: Request):
     }
 
 
+@app.get("/admin/company-status")
+def company_status(request: Request):
+    """Company-base diagnostic: totals, how many have active jobs, breakdown by
+    source, and how many were discovered recently -- i.e. is discovery actually
+    adding new companies? Read-only; touches no data."""
+    from fastapi.responses import JSONResponse
+    err, code = _check_admin(request)
+    if err:
+        return JSONResponse(err, status_code=code)
+    try:
+        with sqlite3.connect(DB_FILE, timeout=5.0) as conn:
+            total = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+            active = conn.execute("SELECT COUNT(*) FROM companies WHERE active = 1").fetchone()[0]
+            with_jobs = conn.execute(
+                "SELECT COUNT(DISTINCT company_name) FROM jobs WHERE is_active = 1"
+            ).fetchone()[0]
+            disc_7d = conn.execute(
+                "SELECT COUNT(*) FROM companies WHERE discovered_at IS NOT NULL "
+                "AND date(discovered_at) >= date('now','-7 days')"
+            ).fetchone()[0]
+            disc_30d = conn.execute(
+                "SELECT COUNT(*) FROM companies WHERE discovered_at IS NOT NULL "
+                "AND date(discovered_at) >= date('now','-30 days')"
+            ).fetchone()[0]
+            by_source = [
+                {"source": s, "companies": c}
+                for s, c in conn.execute(
+                    "SELECT source, COUNT(*) FROM companies GROUP BY source ORDER BY COUNT(*) DESC"
+                ).fetchall()
+            ]
+    except sqlite3.OperationalError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return {
+        "total_companies": total,
+        "active_companies": active,
+        "companies_with_active_jobs": with_jobs,
+        "discovered_last_7d": disc_7d,
+        "discovered_last_30d": disc_30d,
+        "by_source": by_source,
+    }
+
+
 @app.post("/admin/enrich-descriptions")
 def admin_enrich_descriptions(
     request: Request,
