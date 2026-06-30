@@ -79,16 +79,24 @@ MAX_API_PAGES = 10
 
 def _search(api_key: str, naam: str, plaats: str,
             page: int = 1, per_page: int = 100) -> dict:
-    """Run a single KVK Zoeken request."""
+    """Run a single KVK Zoeken request.
+
+    `plaats` is a CITY in the KVK registry, not a country/region. If a country
+    or region value is passed (e.g. "Netherlands"), we omit it entirely and
+    search nationwide by name -- otherwise KVK matches no city and returns a 404
+    ("no results"), which is exactly what broke discovery.
+    """
+    params = {
+        "naam": naam,
+        "type": "hoofdvestiging",
+        "resultatenPerPagina": per_page,
+        "pagina": page,
+    }
+    if plaats and plaats.strip().lower() not in ("netherlands", "nederland", "nl", "holland"):
+        params["plaats"] = plaats
     resp = requests.get(
         ZOEKEN_URL,
-        params={
-            "naam": naam,
-            "plaats": plaats,
-            "type": "hoofdvestiging",
-            "resultatenPerPagina": per_page,
-            "pagina": page,
-        },
+        params=params,
         headers={"apikey": api_key},
         timeout=15,
     )
